@@ -1,0 +1,176 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Resident {
+  id                String   @id @default(uuid())
+  firstName         String
+  preferredName     String?
+  dateOfBirth       DateTime
+  language          String   @default("fr")
+  voicePreferences  Json     @default("{}")
+  consentStatus     ConsentStatus
+  privacySettings   Json
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  medications         Medication[]
+  medicationSchedules MedicationSchedule[]
+  reminderEvents      ReminderEvent[]
+  alerts              Alert[]
+}
+
+model Caregiver {
+  id                      String           @id @default(uuid())
+  name                    String
+  role                    CaregiverRole
+  phone                   String?
+  email                   String           @unique
+  notificationPreferences Json
+  createdAt               DateTime         @default(now())
+  updatedAt               DateTime         @updatedAt
+
+  assignedAlerts Alert[]
+}
+
+model Medication {
+  id                   String   @id @default(uuid())
+  residentId           String
+  name                 String
+  dosageLabel          String
+  instructionsLabel    String
+  prescribingSourceLabel String
+  active               Boolean  @default(true)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  resident  Resident             @relation(fields: [residentId], references: [id])
+  schedules MedicationSchedule[]
+}
+
+model MedicationSchedule {
+  id             String    @id @default(uuid())
+  medicationId   String
+  residentId     String
+  timeOfDay      String
+  recurrenceRule String
+  startDate      DateTime
+  endDate        DateTime?
+  active         Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  medication     Medication      @relation(fields: [medicationId], references: [id])
+  resident       Resident        @relation(fields: [residentId], references: [id])
+  reminderEvents ReminderEvent[]
+}
+
+model ReminderEvent {
+  id                   String              @id @default(uuid())
+  residentId           String
+  medicationScheduleId String
+  scheduledAt          DateTime
+  deliveredAt          DateTime?
+  status               ReminderStatus
+  confirmationSource   ConfirmationSource?
+  transcriptSnippet    String?
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+
+  resident           Resident           @relation(fields: [residentId], references: [id])
+  medicationSchedule MedicationSchedule @relation(fields: [medicationScheduleId], references: [id])
+}
+
+model Alert {
+  id                   String      @id @default(uuid())
+  residentId           String
+  type                 AlertType
+  severity             AlertSeverity
+  status               AlertStatus @default(created)
+  message              String
+  assignedToCaregiverId String?
+  createdAt            DateTime    @default(now())
+  acknowledgedAt       DateTime?
+  resolvedAt           DateTime?
+
+  resident           Resident   @relation(fields: [residentId], references: [id])
+  assignedCaregiver  Caregiver? @relation(fields: [assignedToCaregiverId], references: [id])
+}
+
+model AuditLog {
+  id         String         @id @default(uuid())
+  actorType  AuditActorType
+  actorId    String?
+  action     String
+  entityType String
+  entityId   String?
+  metadata   Json           @default("{}")
+  createdAt  DateTime       @default(now())
+}
+
+enum ConsentStatus {
+  pending
+  granted
+  revoked
+  guardian_granted
+}
+
+enum CaregiverRole {
+  family
+  nurse
+  facility_staff
+  admin
+}
+
+enum ReminderStatus {
+  scheduled
+  delivered
+  confirmed_taken
+  confirmed_not_taken
+  unknown
+  missed
+  escalated
+}
+
+enum ConfirmationSource {
+  voice
+  caregiver
+  dashboard
+  manual
+}
+
+enum AlertType {
+  missed_medication
+  medication_uncertainty
+  emergency_phrase
+  wellbeing_concern
+  device_offline
+  other
+}
+
+enum AlertSeverity {
+  low
+  medium
+  high
+  critical
+}
+
+enum AlertStatus {
+  created
+  sent
+  acknowledged
+  resolved
+  failed
+}
+
+enum AuditActorType {
+  resident
+  caregiver
+  system
+  ai
+}

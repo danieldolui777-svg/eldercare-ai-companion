@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(npm install -g pnpm)",
+      "PowerShell(pnpm --version)",
+      "PowerShell($env:PATH -split \";\" | Where-Object { $_ -match \"node\" })",
+      "PowerShell(Get-ChildItem \"C:\\\\nvm\" -ErrorAction SilentlyContinue | Select-Object Name; Get-ChildItem \"$env:APPDATA\\\\nvm\" -ErrorAction SilentlyContinue | Select-Object Name; Get-ChildItem \"$env:ProgramFiles\\\\nodejs\" -ErrorAction SilentlyContinue | Select-Object Name)"
+    ]
+  }
+}

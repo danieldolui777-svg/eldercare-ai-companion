@@ -1,0 +1,6 @@
+{
+  "buildCommand": "cd ../.. && pnpm install && pnpm --filter @eldercare/dashboard build",
+  "outputDirectory": "apps/dashboard/.next",
+  "installCommand": "pnpm install",
+  "framework": "nextjs"
+}

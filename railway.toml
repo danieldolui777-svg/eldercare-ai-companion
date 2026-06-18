@@ -1,0 +1,7 @@
+[build]
+builder = "nixpacks"
+buildCommand = "pnpm install && pnpm --filter @eldercare/api build && pnpm --filter @eldercare/api exec prisma generate"
+
+[deploy]
+startCommand = "pnpm --filter @eldercare/api exec prisma migrate deploy && pnpm --filter @eldercare/api start"
+restartPolicyType = "on_failure"
