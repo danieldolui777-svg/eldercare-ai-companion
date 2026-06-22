@@ -33,7 +33,7 @@ export class MedicationService {
   }
 
   async create(data: CreateMedication) {
-    const med = await this.prisma.medication.create({ data });
+    const med = await this.prisma.medication.create({ data: data as any });
     await this.audit.log({
       actorType: "system",
       action: "medication.created",
@@ -57,7 +57,7 @@ export class MedicationService {
   }
 
   async createSchedule(data: CreateMedicationSchedule) {
-    const schedule = await this.prisma.medicationSchedule.create({ data });
+    const schedule = await this.prisma.medicationSchedule.create({ data: data as any });
     await this.audit.log({
       actorType: "system",
       action: "medicationSchedule.created",
