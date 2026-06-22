@@ -1,6 +1,6 @@
 [build]
 builder = "nixpacks"
-buildCommand = "pnpm install && pnpm --filter @eldercare/api exec prisma generate && pnpm --filter @eldercare/api build"
+buildCommand = "pnpm install && pnpm --filter @eldercare/domain build && pnpm --filter @eldercare/config build && pnpm --filter @eldercare/api exec prisma generate && pnpm --filter @eldercare/api build"
 
 [deploy]
 startCommand = "pnpm --filter @eldercare/api exec prisma migrate deploy && pnpm --filter @eldercare/api start"
