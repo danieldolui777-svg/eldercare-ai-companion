@@ -4,7 +4,7 @@
   "scripts": {
     "build": "tsc --project tsconfig.build.json",
     "dev": "ts-node-dev --respawn --transpile-only -r tsconfig-paths/register src/main.ts",
-    "start": "node -r tsconfig-paths/register dist/src/main.js",
+    "start": "node -r tsconfig-paths/register dist/apps/api/src/main.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint src"
