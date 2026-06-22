@@ -3,5 +3,5 @@ builder = "nixpacks"
 buildCommand = "pnpm install && pnpm --filter @eldercare/domain build && pnpm --filter @eldercare/config build && pnpm --filter @eldercare/api exec prisma generate && pnpm --filter @eldercare/api build"
 
 [deploy]
-startCommand = "pnpm --filter @eldercare/api exec prisma migrate deploy && pnpm --filter @eldercare/api start"
+startCommand = "pnpm --filter @eldercare/api exec prisma migrate deploy && node /app/apps/api/dist/apps/api/src/main.js"
 restartPolicyType = "on_failure"
