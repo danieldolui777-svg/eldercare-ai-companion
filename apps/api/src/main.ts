@@ -1,4 +1,12 @@
 import "reflect-metadata";
+import { webcrypto } from "node:crypto";
+
+// Ensure the global Web Crypto API is available on older Node runtimes
+// (e.g. Node 18). @nestjs/schedule relies on crypto.randomUUID().
+if (!(globalThis as { crypto?: unknown }).crypto) {
+  (globalThis as { crypto?: unknown }).crypto = webcrypto;
+}
+
 import { NestFactory } from "@nestjs/core";
 import {
   FastifyAdapter,
