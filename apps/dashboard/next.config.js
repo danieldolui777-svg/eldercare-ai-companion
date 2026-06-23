@@ -1,8 +1,6 @@
 /** @type {import('next').NextConfig} */
-const nextConfig = {
-  env: {
-    API_URL: process.env.API_URL || "http://localhost:3000/api/v1",
-  },
-};
+// NEXT_PUBLIC_API_URL is read directly in src/lib/api.ts and is
+// automatically inlined by Next.js for the browser bundle.
+const nextConfig = {};
 
 module.exports = nextConfig;
