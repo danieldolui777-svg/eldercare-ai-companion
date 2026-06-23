@@ -101,3 +101,20 @@ export interface CompanionReply {
 export interface CompanionChatProvider {
   reply(input: CompanionReplyInput): Promise<CompanionReply>;
 }
+
+// ---------------------------------------------------------------------------
+// Concrete OpenAI implementations (the first provider — swappable later).
+// ---------------------------------------------------------------------------
+
+export {
+  OpenAiSpeechProvider,
+  type OpenAiSpeechOptions,
+} from "./openai/openai-speech";
+export {
+  OpenAiCompanionChatProvider,
+  type OpenAiChatOptions,
+} from "./openai/openai-chat";
+export {
+  buildCompanionSystemPrompt,
+  type CompanionPromptOptions,
+} from "./openai/companion-prompt";

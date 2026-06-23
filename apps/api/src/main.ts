@@ -20,7 +20,8 @@ async function bootstrap() {
 
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
-    new FastifyAdapter({ logger: isDev }),
+    // 15 MB body limit so base64-encoded voice clips fit in JSON requests.
+    new FastifyAdapter({ logger: isDev, bodyLimit: 15 * 1024 * 1024 }),
   );
 
   app.setGlobalPrefix("api/v1");

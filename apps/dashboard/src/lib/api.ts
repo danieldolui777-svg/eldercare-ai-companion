@@ -67,3 +67,26 @@ export const generateReminders = () =>
   req<any>("/scheduler/generate", { method: "POST", body: "{}" });
 export const detectMissed = () =>
   req<any>("/scheduler/detect-missed", { method: "POST", body: "{}" });
+
+// ---- Voice companion ----
+export interface ChatTurn {
+  role: "system" | "user" | "assistant";
+  content: string;
+}
+export interface ConverseResponse {
+  transcript: string;
+  reply: string;
+  audioBase64: string;
+  audioMimeType: string;
+}
+export const converse = (data: {
+  residentId: string;
+  audioBase64: string;
+  mimeType: string;
+  language?: "fr" | "en";
+  history?: ChatTurn[];
+}) =>
+  req<ConverseResponse>("/voice/converse", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });

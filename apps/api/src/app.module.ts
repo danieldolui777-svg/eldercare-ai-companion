@@ -8,6 +8,7 @@ import { MedicationModule } from "./medication/medication.module";
 import { ReminderModule } from "./reminder/reminder.module";
 import { AlertModule } from "./alert/alert.module";
 import { SchedulerModule } from "./scheduler/scheduler.module";
+import { VoiceModule } from "./voice/voice.module";
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { SchedulerModule } from "./scheduler/scheduler.module";
     ReminderModule,
     AlertModule,
     SchedulerModule,
+    VoiceModule,
   ],
 })
 export class AppModule {}
