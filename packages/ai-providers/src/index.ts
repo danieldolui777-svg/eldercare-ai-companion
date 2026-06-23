@@ -42,3 +42,62 @@ export interface TextLLMProvider {
   generateDailySummary(input: DailySummaryInput): Promise<DailySummary>;
   classifyConversationRisk(input: RiskClassificationInput): Promise<RiskClassification>;
 }
+
+// ---------------------------------------------------------------------------
+// Phase 3 — "simple prototype" voice pipeline (STT -> chat -> TTS).
+// Kept vendor-agnostic: an OpenAI implementation lives behind these.
+// The realtime VoiceProvider above stays for a future low-latency upgrade.
+// ---------------------------------------------------------------------------
+
+/** Speech-to-text — the companion's "ears". */
+export interface TranscribeInput {
+  /** Raw audio bytes captured from the device microphone. */
+  audio: Buffer;
+  /** MIME type of the audio, e.g. "audio/webm" or "audio/wav". */
+  mimeType: string;
+  /** Optional BCP-47 language hint, e.g. "fr" or "en". */
+  language?: string;
+}
+
+export interface TranscribeResult {
+  text: string;
+}
+
+/** Text-to-speech — the companion's "voice". */
+export interface SynthesizeInput {
+  text: string;
+  /** Optional BCP-47 language hint, e.g. "fr" or "en". */
+  language?: string;
+}
+
+export interface SynthesizeResult {
+  audio: Buffer;
+  mimeType: string;
+}
+
+export interface SpeechProvider {
+  transcribe(input: TranscribeInput): Promise<TranscribeResult>;
+  synthesize(input: SynthesizeInput): Promise<SynthesizeResult>;
+}
+
+export type ChatRole = "system" | "user" | "assistant";
+
+export interface ChatMessage {
+  role: ChatRole;
+  content: string;
+}
+
+/** A single conversational turn for the companion's "brain". */
+export interface CompanionReplyInput {
+  residentId: string;
+  /** Prior conversation turns (excluding the system prompt). */
+  messages: ChatMessage[];
+}
+
+export interface CompanionReply {
+  text: string;
+}
+
+export interface CompanionChatProvider {
+  reply(input: CompanionReplyInput): Promise<CompanionReply>;
+}
