@@ -5,11 +5,22 @@
 // non-negotiable safety constraints. The deterministic backend remains the
 // source of truth for medication and alerts — the AI only converses.
 
+/** A medication reminder that is currently due — the minimal, curated view the
+ *  companion is allowed to see. NOT the full medical record. */
+export interface DueReminder {
+  medicationName: string;
+  /** Human-readable time of day, e.g. "08:00". */
+  timeOfDay?: string;
+}
+
 export interface CompanionPromptOptions {
   /** Preferred reply language, BCP-47, e.g. "fr" or "en". Defaults to French. */
   language?: string;
   /** Optional first name to personalise the conversation. */
   residentFirstName?: string;
+  /** Medication reminders currently due, if any — injected so the companion can
+   *  gently remind. The backend remains the source of truth for medication. */
+  dueReminders?: DueReminder[];
 }
 
 export function buildCompanionSystemPrompt(
@@ -17,6 +28,26 @@ export function buildCompanionSystemPrompt(
 ): string {
   const language = options.language ?? "fr";
   const name = options.residentFirstName?.trim();
+  const reminders = options.dueReminders ?? [];
+
+  const reminderLines =
+    reminders.length > 0
+      ? [
+          "",
+          "MEDICATION REMINDERS DUE RIGHT NOW for this person:",
+          ...reminders.map((r) =>
+            r.timeOfDay
+              ? `- ${r.medicationName} (scheduled around ${r.timeOfDay})`
+              : `- ${r.medicationName}`,
+          ),
+          "If it feels natural in the conversation, gently remind them to take",
+          "the medication and ask whether they have taken it. Mention it kindly,",
+          "once — do not nag. You may say what the medication is called, but never",
+          "give advice about it, the dose, or what it is for. If they say they have",
+          "taken it, are unsure, or have not, simply acknowledge warmly; a caregiver",
+          "is informed automatically.",
+        ]
+      : [];
 
   return [
     "You are a warm, patient voice companion for an elderly person.",
@@ -39,6 +70,7 @@ export function buildCompanionSystemPrompt(
     "  they feel in danger, calmly tell them you will let a caregiver know right",
     "  away and encourage them to call emergency services if it is urgent.",
     "- Do not give legal or financial advice.",
+    ...reminderLines,
     "",
     "Style:",
     "- Keep replies short and spoken-friendly (1-3 sentences). This will be read",

@@ -102,6 +102,28 @@ export interface CompanionChatProvider {
   reply(input: CompanionReplyInput): Promise<CompanionReply>;
 }
 
+/** A due reminder reference passed to the classifier (curated, not the full record). */
+export interface MedicationReminderRef {
+  id: string;
+  medicationName: string;
+}
+
+export type MedicationConfirmStatus =
+  | "confirmed_taken"
+  | "confirmed_not_taken"
+  | "unknown";
+
+export interface ClassifyMedicationInput {
+  transcript: string;
+  reminders: MedicationReminderRef[];
+  language?: "fr" | "en";
+}
+
+export interface MedicationClassification {
+  reminderId: string;
+  status: MedicationConfirmStatus;
+}
+
 // ---------------------------------------------------------------------------
 // Concrete OpenAI implementations (the first provider — swappable later).
 // ---------------------------------------------------------------------------
@@ -117,4 +139,5 @@ export {
 export {
   buildCompanionSystemPrompt,
   type CompanionPromptOptions,
+  type DueReminder,
 } from "./openai/companion-prompt";

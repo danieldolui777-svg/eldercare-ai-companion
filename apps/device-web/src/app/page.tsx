@@ -1,10 +1,14 @@
 "use client";
-import { useCallback, useRef, useState } from "react";
-import { converse, type ChatTurn } from "@/lib/api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  converse,
+  getResidents,
+  type ChatTurn,
+  type Resident,
+  type ConverseResponse,
+} from "@/lib/api";
 
 type Status = "idle" | "recording" | "thinking" | "speaking" | "error";
-
-const RESIDENT_ID = "demo";
 
 export default function CompanionDevicePage() {
   const [status, setStatus] = useState<Status>("idle");
@@ -13,6 +17,24 @@ export default function CompanionDevicePage() {
   const [lastReply, setLastReply] = useState("");
   const [error, setError] = useState("");
   const [needsTapToHear, setNeedsTapToHear] = useState(false);
+  const [residents, setResidents] = useState<Resident[]>([]);
+  const [residentId, setResidentId] = useState("demo");
+  const [confirmation, setConfirmation] =
+    useState<ConverseResponse["confirmation"]>(undefined);
+
+  // For the prototype, pick the first resident so the companion is "aware".
+  // In a real deployment, one device is bound to one resident.
+  useEffect(() => {
+    getResidents()
+      .then((list) => {
+        setResidents(list);
+        if (list.length > 0) {
+          setResidentId(list[0].id);
+          setLanguage(list[0].language ?? "fr");
+        }
+      })
+      .catch(() => undefined);
+  }, []);
 
   const historyRef = useRef<ChatTurn[]>([]);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -74,7 +96,7 @@ export default function CompanionDevicePage() {
       const audioBase64 = await blobToBase64(blob);
 
       const res = await converse({
-        residentId: RESIDENT_ID,
+        residentId,
         audioBase64,
         mimeType: blob.type || "audio/webm",
         language,
@@ -88,6 +110,7 @@ export default function CompanionDevicePage() {
       ];
       setLastUser(res.transcript);
       setLastReply(res.reply);
+      setConfirmation(res.confirmation);
 
       const url = `data:${res.audioMimeType};base64,${res.audioBase64}`;
       lastAudioUrlRef.current = url;
@@ -114,18 +137,39 @@ export default function CompanionDevicePage() {
       {/* Header */}
       <div className="w-full flex items-center justify-between max-w-md">
         <span className="text-xl font-semibold opacity-90">Compagnon</span>
-        <div className="flex gap-1">
-          {(["fr", "en"] as const).map((l) => (
-            <button
-              key={l}
-              onClick={() => setLanguage(l)}
-              className={`px-3 py-1 rounded-lg text-sm font-medium ${
-                language === l ? "bg-white text-brand-700" : "bg-brand-500/40 text-white"
-              }`}
+        <div className="flex items-center gap-2">
+          {residents.length > 1 && (
+            <select
+              value={residentId}
+              onChange={(e) => {
+                setResidentId(e.target.value);
+                historyRef.current = [];
+                setLastUser("");
+                setLastReply("");
+                setConfirmation(undefined);
+              }}
+              className="px-2 py-1 rounded-lg text-sm font-medium bg-brand-500/40 text-white max-w-[7rem]"
             >
-              {l.toUpperCase()}
-            </button>
-          ))}
+              {residents.map((r) => (
+                <option key={r.id} value={r.id} className="text-gray-900">
+                  {r.preferredName ?? r.firstName}
+                </option>
+              ))}
+            </select>
+          )}
+          <div className="flex gap-1">
+            {(["fr", "en"] as const).map((l) => (
+              <button
+                key={l}
+                onClick={() => setLanguage(l)}
+                className={`px-3 py-1 rounded-lg text-sm font-medium ${
+                  language === l ? "bg-white text-brand-700" : "bg-brand-500/40 text-white"
+                }`}
+              >
+                {l.toUpperCase()}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -167,6 +211,24 @@ export default function CompanionDevicePage() {
         {lastReply && (
           <div className="bg-white text-gray-900 rounded-2xl px-5 py-4 text-xl leading-relaxed">
             {lastReply}
+          </div>
+        )}
+        {confirmation && (
+          <div className="text-center text-white bg-green-600/90 rounded-xl px-4 py-3 font-medium">
+            {confirmation.status === "confirmed_taken"
+              ? t(
+                  `✓ ${confirmation.medicationName} : bien noté, c'est pris.`,
+                  `✓ ${confirmation.medicationName}: noted as taken.`,
+                )
+              : confirmation.status === "confirmed_not_taken"
+              ? t(
+                  `${confirmation.medicationName} : noté comme non pris. Un soignant est prévenu.`,
+                  `${confirmation.medicationName}: noted as not taken. A caregiver is notified.`,
+                )
+              : t(
+                  `${confirmation.medicationName} : un soignant va vérifier.`,
+                  `${confirmation.medicationName}: a caregiver will check.`,
+                )}
           </div>
         )}
         {error && <p className="text-center text-white bg-red-500/80 rounded-xl px-4 py-3">{error}</p>}
