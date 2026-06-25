@@ -7,6 +7,7 @@ import {
   type Resident,
   type ConverseResponse,
 } from "@/lib/api";
+import { Standby } from "./Standby";
 
 type Status = "idle" | "recording" | "thinking" | "speaking" | "error";
 
@@ -21,6 +22,7 @@ export default function CompanionDevicePage() {
   const [residentId, setResidentId] = useState("demo");
   const [confirmation, setConfirmation] =
     useState<ConverseResponse["confirmation"]>(undefined);
+  const [standby, setStandby] = useState(false);
 
   // For the prototype, pick the first resident so the companion is "aware".
   // In a real deployment, one device is bound to one resident.
@@ -132,6 +134,16 @@ export default function CompanionDevicePage() {
       ? t("Je vous réponds…", "Replying…")
       : t("Touchez pour parler", "Tap to talk");
 
+  if (standby) {
+    return (
+      <Standby
+        residentId={residentId}
+        language={language}
+        onExit={() => setStandby(false)}
+      />
+    );
+  }
+
   return (
     <main className="h-full flex flex-col items-center px-6 py-8 select-none">
       {/* Header */}
@@ -233,6 +245,13 @@ export default function CompanionDevicePage() {
         )}
         {error && <p className="text-center text-white bg-red-500/80 rounded-xl px-4 py-3">{error}</p>}
       </div>
+
+      <button
+        onClick={() => setStandby(true)}
+        className="mt-4 px-5 py-3 rounded-xl bg-brand-500/40 text-white text-base font-medium"
+      >
+        🔔 {t("Mode veille (rappels automatiques)", "Standby (auto reminders)")}
+      </button>
     </main>
   );
 }

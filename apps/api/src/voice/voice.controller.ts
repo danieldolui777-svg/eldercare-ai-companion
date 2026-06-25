@@ -18,6 +18,11 @@ const ConverseSchema = z.object({
     .optional(),
 });
 
+const AnnounceSchema = z.object({
+  residentId: z.string().min(1),
+  reminderId: z.string().min(1),
+});
+
 @Controller()
 export class VoiceController {
   constructor(private readonly voiceService: VoiceService) {}
@@ -28,5 +33,13 @@ export class VoiceController {
   @HttpCode(HttpStatus.OK)
   converse(@Body(new ZodPipe(ConverseSchema)) body: any) {
     return this.voiceService.converse(body);
+  }
+
+  // Proactive reminder: the device calls this at the scheduled time to get the
+  // spoken announcement ("it's time to take your X") for a due reminder.
+  @Post("voice/announce")
+  @HttpCode(HttpStatus.OK)
+  announce(@Body(new ZodPipe(AnnounceSchema)) body: any) {
+    return this.voiceService.announce(body);
   }
 }

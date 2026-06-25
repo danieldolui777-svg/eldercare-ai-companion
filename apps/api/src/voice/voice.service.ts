@@ -1,4 +1,4 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, NotFoundException } from "@nestjs/common";
 import {
   OpenAiSpeechProvider,
   OpenAiCompanionChatProvider,
@@ -28,6 +28,35 @@ export interface ConverseResult {
     medicationName: string;
     status: "confirmed_taken" | "confirmed_not_taken" | "unknown";
   };
+}
+
+export interface AnnounceInput {
+  residentId: string;
+  reminderId: string;
+}
+
+export interface AnnounceResult {
+  text: string;
+  audioBase64: string;
+  audioMimeType: string;
+  medicationName: string;
+}
+
+/**
+ * Deterministic medication-reminder announcement — NOT AI-generated. The wording
+ * is fixed so a medication prompt is predictable and auditable; the AI is only
+ * used to synthesize the voice and to understand the resident's spoken reply.
+ */
+function buildReminderAnnouncement(opts: {
+  name?: string;
+  medicationName: string;
+  language: "fr" | "en";
+}): string {
+  const greeting = opts.name ? `${opts.name}, ` : "";
+  if (opts.language === "en") {
+    return `Hello ${greeting}it's time to take your ${opts.medicationName}.`;
+  }
+  return `Bonjour ${greeting}c'est l'heure de prendre votre ${opts.medicationName}.`;
 }
 
 /**
@@ -151,6 +180,59 @@ export class VoiceService {
       audioBase64: speechOut.audio.toString("base64"),
       audioMimeType: speechOut.mimeType,
       confirmation,
+    };
+  }
+
+  /**
+   * Proactively announce a due medication reminder (the device plays this at the
+   * scheduled time, no user input). Deterministic wording, spoken via TTS. Marks
+   * the reminder "delivered" so it isn't announced twice.
+   */
+  async announce(input: AnnounceInput): Promise<AnnounceResult> {
+    if (!this.configured) {
+      throw new Error("Voice companion is not configured (missing OPENAI_API_KEY).");
+    }
+
+    const resident = await this.loadResident(input.residentId);
+    const reminder = await this.prisma.reminderEvent.findUnique({
+      where: { id: input.reminderId },
+      include: { medicationSchedule: { include: { medication: true } } },
+    });
+    if (!reminder || reminder.residentId !== input.residentId) {
+      throw new NotFoundException(`Reminder ${input.reminderId} not found for resident`);
+    }
+
+    const language = (resident?.language as "fr" | "en") ?? "fr";
+    const medicationName = reminder.medicationSchedule.medication.name;
+    const text = buildReminderAnnouncement({
+      name: resident?.preferredName ?? resident?.firstName,
+      medicationName,
+      language,
+    });
+
+    const speechOut = await this.speech.synthesize({ text, language });
+
+    // Mark delivered so the device doesn't announce it again. The resident's
+    // spoken reply (via /voice/converse) records the actual confirmation.
+    await this.confirmation.markAsDelivered(reminder.id).catch((err) => {
+      this.logger.warn(
+        `Could not mark reminder ${reminder.id} delivered: ${(err as Error).message}`,
+      );
+    });
+
+    await this.audit.log({
+      actorType: "ai",
+      action: "voice.reminder_announced",
+      entityType: "ReminderEvent",
+      entityId: reminder.id,
+      metadata: { residentId: input.residentId, medication: medicationName },
+    });
+
+    return {
+      text,
+      audioBase64: speechOut.audio.toString("base64"),
+      audioMimeType: speechOut.mimeType,
+      medicationName,
     };
   }
 

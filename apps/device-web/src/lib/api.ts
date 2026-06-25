@@ -47,3 +47,47 @@ export async function converse(data: {
   }
   return res.json() as Promise<ConverseResponse>;
 }
+
+export interface DueReminder {
+  id: string;
+  medicationName: string;
+  scheduledAt: string;
+}
+
+/** Reminders that are due now and not yet announced (status "scheduled"). */
+export async function getDueReminders(residentId: string): Promise<DueReminder[]> {
+  const res = await fetch(`${BASE}/residents/${residentId}/reminders`);
+  if (!res.ok) throw new Error(`API ${res.status}`);
+  const all = (await res.json()) as any[];
+  const now = Date.now();
+  return all
+    .filter(
+      (r) =>
+        r.status === "scheduled" && new Date(r.scheduledAt).getTime() <= now,
+    )
+    .map((r) => ({
+      id: r.id,
+      medicationName: r.medicationSchedule?.medication?.name ?? "médicament",
+      scheduledAt: r.scheduledAt,
+    }));
+}
+
+export interface AnnounceResponse {
+  text: string;
+  audioBase64: string;
+  audioMimeType: string;
+  medicationName: string;
+}
+
+export async function announce(
+  residentId: string,
+  reminderId: string,
+): Promise<AnnounceResponse> {
+  const res = await fetch(`${BASE}/voice/announce`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ residentId, reminderId }),
+  });
+  if (!res.ok) throw new Error(`API ${res.status}`);
+  return res.json() as Promise<AnnounceResponse>;
+}
