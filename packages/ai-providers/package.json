@@ -7,10 +7,8 @@
     "build": "tsc"
   },
   "dependencies": {
-    "openai": "^4.67.0"
-  },
-  "devDependencies": {
     "@types/node": "^22.0.0",
+    "openai": "^4.67.0",
     "typescript": "^5.5.0"
   }
 }

@@ -50,12 +50,21 @@ importers:
       '@prisma/client':
         specifier: ^5.16.0
         version: 5.22.0(prisma@5.22.0)
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.21
+      prisma:
+        specifier: ^5.16.0
+        version: 5.22.0
       reflect-metadata:
         specifier: ^0.2.0
         version: 0.2.2
       rxjs:
         specifier: ^7.8.0
         version: 7.8.2
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
       zod:
         specifier: ^3.23.0
         version: 3.25.76
@@ -66,12 +75,6 @@ importers:
       '@nestjs/testing':
         specifier: ^10.0.0
         version: 10.4.22(@nestjs/common@10.4.22(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@10.4.22(@nestjs/common@10.4.22(reflect-metadata@0.2.2)(rxjs@7.8.2))(reflect-metadata@0.2.2)(rxjs@7.8.2))
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.21
-      prisma:
-        specifier: ^5.16.0
-        version: 5.22.0
       ts-node:
         specifier: ^10.9.0
         version: 10.9.2(@types/node@22.19.21)(typescript@5.9.3)
@@ -84,9 +87,6 @@ importers:
       tsx:
         specifier: ^4.19.0
         version: 4.22.4
-      typescript:
-        specifier: ^5.5.0
-        version: 5.9.3
       vitest:
         specifier: ^2.0.0
         version: 2.1.9(@types/node@22.19.21)(terser@5.48.0)
@@ -164,39 +164,37 @@ importers:
 
   packages/ai-providers:
     dependencies:
-      openai:
-        specifier: ^4.67.0
-        version: 4.104.0(zod@3.25.76)
-    devDependencies:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.21
+      openai:
+        specifier: ^4.67.0
+        version: 4.104.0(zod@3.25.76)
       typescript:
         specifier: ^5.5.0
         version: 5.9.3
 
   packages/config:
     dependencies:
-      zod:
-        specifier: ^3.23.0
-        version: 3.25.76
-    devDependencies:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.21
       typescript:
         specifier: ^5.5.0
         version: 5.9.3
+      zod:
+        specifier: ^3.23.0
+        version: 3.25.76
 
   packages/domain:
     dependencies:
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
       zod:
         specifier: ^3.23.0
         version: 3.25.76
     devDependencies:
-      typescript:
-        specifier: ^5.5.0
-        version: 5.9.3
       vitest:
         specifier: ^2.0.0
         version: 2.1.9(@types/node@22.19.21)(terser@5.48.0)
