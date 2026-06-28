@@ -8,6 +8,7 @@ import {
   type ConverseResponse,
 } from "@/lib/api";
 import { Standby } from "./Standby";
+import { AlwaysOn } from "./AlwaysOn";
 
 type Status = "idle" | "recording" | "thinking" | "speaking" | "error";
 
@@ -23,6 +24,7 @@ export default function CompanionDevicePage() {
   const [confirmation, setConfirmation] =
     useState<ConverseResponse["confirmation"]>(undefined);
   const [standby, setStandby] = useState(false);
+  const [alwaysOn, setAlwaysOn] = useState(false);
 
   // For the prototype, pick the first resident so the companion is "aware".
   // In a real deployment, one device is bound to one resident.
@@ -133,6 +135,16 @@ export default function CompanionDevicePage() {
       : status === "speaking"
       ? t("Je vous réponds…", "Replying…")
       : t("Touchez pour parler", "Tap to talk");
+
+  if (alwaysOn) {
+    return (
+      <AlwaysOn
+        residentId={residentId}
+        language={language}
+        onExit={() => setAlwaysOn(false)}
+      />
+    );
+  }
 
   if (standby) {
     return (
@@ -246,12 +258,20 @@ export default function CompanionDevicePage() {
         {error && <p className="text-center text-white bg-red-500/80 rounded-xl px-4 py-3">{error}</p>}
       </div>
 
-      <button
-        onClick={() => setStandby(true)}
-        className="mt-4 px-5 py-3 rounded-xl bg-brand-500/40 text-white text-base font-medium"
-      >
-        🔔 {t("Mode veille (rappels automatiques)", "Standby (auto reminders)")}
-      </button>
+      <div className="flex flex-col gap-2 mt-4 w-full max-w-md">
+        <button
+          onClick={() => setAlwaysOn(true)}
+          className="w-full px-5 py-4 rounded-xl bg-white text-brand-700 text-base font-bold shadow-lg active:scale-95"
+        >
+          🎙️ {t("Écoute permanente (sans bouton)", "Always listening (hands-free)")}
+        </button>
+        <button
+          onClick={() => setStandby(true)}
+          className="w-full px-5 py-3 rounded-xl bg-brand-500/40 text-white text-base font-medium"
+        >
+          🔔 {t("Mode veille (rappels automatiques)", "Standby (auto reminders)")}
+        </button>
+      </div>
     </main>
   );
 }
