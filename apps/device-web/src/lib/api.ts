@@ -95,6 +95,17 @@ export interface AnnounceResponse {
   medicationName: string;
 }
 
+/** Creates an immediate test reminder (dev/demo use). */
+export async function createTestReminder(residentId: string): Promise<{ reminderId: string }> {
+  const res = await fetch(`${BASE}/voice/test-reminder`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ residentId }),
+  });
+  if (!res.ok) throw new Error(`API ${res.status}`);
+  return res.json() as Promise<{ reminderId: string }>;
+}
+
 export async function announce(
   residentId: string,
   reminderId: string,

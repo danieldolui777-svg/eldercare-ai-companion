@@ -53,4 +53,12 @@ export class VoiceController {
   announce(@Body(new ZodPipe(AnnounceSchema)) body: any) {
     return this.voiceService.announce(body);
   }
+
+  // Creates an immediate test reminder and returns its id so the device can
+  // call /voice/announce right away — useful for demos without waiting for the cron.
+  @Post("voice/test-reminder")
+  @HttpCode(HttpStatus.OK)
+  testReminder(@Body(new ZodPipe(z.object({ residentId: z.string().min(1) }))) body: any) {
+    return this.voiceService.createTestReminder(body.residentId);
+  }
 }

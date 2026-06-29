@@ -322,6 +322,31 @@ export class VoiceService {
     };
   }
 
+  /**
+   * Dev/test helper: creates a ReminderEvent scheduled for right now so the
+   * device can immediately test the announcement flow without waiting for the
+   * nightly cron to generate real reminders.
+   */
+  async createTestReminder(residentId: string): Promise<{ reminderId: string }> {
+    const schedule = await this.prisma.medicationSchedule.findFirst({
+      where: { medication: { residentId } },
+    });
+    if (!schedule) {
+      throw new Error(
+        `No medication schedule found for resident ${residentId} — add a medication first.`,
+      );
+    }
+    const reminder = await this.prisma.reminderEvent.create({
+      data: {
+        residentId,
+        medicationScheduleId: schedule.id,
+        scheduledAt: new Date(),
+        status: "scheduled",
+      },
+    });
+    return { reminderId: reminder.id };
+  }
+
   /** Loads the resident only if the id is a real, AI-consented resident. */
   private async loadResident(residentId: string) {
     if (!residentId || residentId === "demo") return null;

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   chat as apiChat,
   announce,
+  createTestReminder,
   getDueReminders,
   type ChatTurn,
   type DueReminder,
@@ -484,6 +485,30 @@ export function AlwaysOn({
           <p className="bg-red-500/80 text-white rounded-xl px-4 py-2 text-sm">{error}</p>
         )}
       </div>
+
+      {/* Test button — only visible in passive mode so it doesn't interfere */}
+      {phase === "passive" && (
+        <button
+          onClick={async () => {
+            try {
+              const { reminderId } = await createTestReminder(residentId);
+              // Clear the "already announced" set so the poll picks it up immediately
+              announcedRef.current.clear();
+              // Also directly trigger it without waiting for the next poll
+              const due: DueReminder[] = [
+                { id: reminderId, medicationName: "test", scheduledAt: new Date().toISOString() },
+              ];
+              await handleReminderRef.current(due[0]);
+            } catch (e: any) {
+              setError(e?.message ?? t("Erreur test rappel", "Test reminder error"));
+              setTimeout(() => setError(""), 4_000);
+            }
+          }}
+          className="mt-1 px-4 py-2 rounded-xl bg-white/10 text-white/60 text-sm border border-white/20"
+        >
+          💊 {t("Tester un rappel", "Test a reminder")}
+        </button>
+      )}
 
       <button onClick={onExit} className="mt-2 text-white/55 underline text-base">
         {t("Quitter", "Exit")}
