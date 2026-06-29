@@ -294,14 +294,40 @@ export function AlwaysOn({
     }
     const rec = new API();
     rec.continuous = true;
-    rec.interimResults = false; // final results only — avoids partial "dan..." triggers
+    rec.interimResults = true;
     rec.lang = language === "fr" ? "fr-FR" : "en-US";
 
     rec.onresult = (event: any) => {
       for (let i = event.resultIndex; i < event.results.length; i++) {
-        if (event.results[i].isFinal) {
-          processTranscriptRef.current(event.results[i][0].transcript as string);
+        const transcript = event.results[i][0].transcript as string;
+        const isFinal = event.results[i].isFinal as boolean;
+
+        if (!isFinal) {
+          // Interim result: only use it to give IMMEDIATE visual feedback when
+          // "daniel" is heard — don't send the query yet (transcript incomplete).
+          const lower = transcript.toLowerCase();
+          if (
+            lower.includes(WAKE_WORD) &&
+            (phaseRef.current === "passive" || phaseRef.current === "speaking")
+          ) {
+            if (phaseRef.current === "speaking") stopCurrentAudio();
+            if (phaseRef.current !== "activated") {
+              setPhaseSync("activated");
+              setWakeLabel(t("Oui ? Je vous écoute…", "Yes? I'm listening…"));
+              clearTimeout(activatedTimerRef.current!);
+              activatedTimerRef.current = setTimeout(() => {
+                if (phaseRef.current === "activated") {
+                  setPhaseSync("passive");
+                  setWakeLabel("");
+                }
+              }, ACTIVATED_TIMEOUT);
+            }
+          }
+          continue;
         }
+
+        // Final result: full processing (query extraction, send to API…)
+        processTranscriptRef.current(transcript);
       }
     };
 
@@ -326,7 +352,7 @@ export function AlwaysOn({
 
     recogRef.current = rec;
     try { rec.start(); } catch { /* ignore if already started */ }
-  }, [language, t]);
+  }, [language, t, stopCurrentAudio, setPhaseSync]);
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
