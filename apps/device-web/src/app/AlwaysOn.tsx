@@ -348,8 +348,8 @@ export function AlwaysOn({
             break;
 
           case "error":
-            setError(t("Erreur Realtime.", "Realtime error."));
-            setTimeout(() => setError(""), 3_500);
+            setError(`Realtime: ${(msg.message as string) ?? "?"}`);
+            setTimeout(() => setError(""), 8_000);
             closeRealtimeSessionRef.current();
             break;
         }
