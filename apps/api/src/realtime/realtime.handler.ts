@@ -79,7 +79,6 @@ export class RealtimeHandler {
     const openai = new WebSocket(OPENAI_REALTIME_URL, {
       headers: {
         Authorization: `Bearer ${this.apiKey}`,
-        "OpenAI-Beta": "realtime=v1",
       },
     });
 
