@@ -1,29 +1,25 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  chat as apiChat,
   announce,
-  converse,
   getDueReminders,
   type ChatTurn,
   type DueReminder,
 } from "@/lib/api";
 
 type Phase =
-  | "idle"        // waiting for Start tap
-  | "listening"   // VAD running, no speech detected
-  | "speech"      // speech detected, recording
-  | "thinking"    // audio sent to API
-  | "speaking"    // playing AI reply
-  | "announcing"; // playing medication jingle/announcement
+  | "idle"        // before first tap — AudioContext needs a user gesture
+  | "passive"     // listening for wake word "daniel"
+  | "activated"   // heard "daniel", waiting for the query
+  | "thinking"    // query sent to API, waiting for reply
+  | "speaking"    // playing AI reply (mic still open for interruption)
+  | "announcing"; // medication reminder — top priority, interrupts everything
 
-// VAD thresholds — tweak if too sensitive or not sensitive enough
-const SPEECH_RMS = 0.022;       // RMS above this = speech
-const SILENCE_RMS = 0.015;      // RMS below this = silence
-const SPEECH_DEBOUNCE = 350;    // ms above threshold before recording starts
-const SILENCE_DEBOUNCE = 1_500; // ms of silence before recording stops
-const MIN_RECORD_MS = 700;      // recordings shorter than this are ignored (noise)
-const ECHO_COOLDOWN_MS = 600;   // pause after AI speaks before listening again
-const POLL_MS = 30_000;         // check for due medication reminders every 30s
+const WAKE_WORD = "daniel";
+const ACTIVATED_TIMEOUT = 8_000;  // back to passive if no query arrives in 8s
+const ECHO_COOLDOWN = 700;        // ms to wait after audio finishes before re-listening
+const POLL_MS = 30_000;           // medication reminder check interval
 
 export function AlwaysOn({
   residentId,
@@ -36,49 +32,40 @@ export function AlwaysOn({
 }) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [clock, setClock] = useState("");
+  const [wakeLabel, setWakeLabel] = useState("");
   const [lastUser, setLastUser] = useState("");
   const [lastReply, setLastReply] = useState("");
   const [badge, setBadge] = useState("");
   const [error, setError] = useState("");
-  const [rmsLevel, setRmsLevel] = useState(0); // 0–1 for the visual ring
+  const [browserOk, setBrowserOk] = useState(true);
 
-  // Audio infrastructure
+  // Audio
   const ctxRef = useRef<AudioContext | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const analyserRef = useRef<AnalyserNode | null>(null);
-  const dataRef = useRef<Float32Array>(new Float32Array(512));
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<Blob[]>([]);
+  const currentSrcRef = useRef<AudioBufferSourceNode | null>(null);
+  const keepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // System refs
+  // Speech recognition
+  const recogRef = useRef<any>(null); // SpeechRecognition
+  const listeningRef = useRef(false);
+
+  // System
   const wakeRef = useRef<any>(null);
-  const pollRef = useRef<any>(null);
-  const keepAliveRef = useRef<any>(null);
-  const rafRef = useRef<number>(0);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const activatedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const historyRef = useRef<ChatTurn[]>([]);
   const announcedRef = useRef<Set<string>>(new Set());
 
-  // VAD state — all in refs so the RAF loop reads the latest without re-renders
-  const busyRef = useRef(false);           // true while recording/thinking/speaking
-  const phaseRef = useRef<Phase>("idle");  // mirrors `phase` for the RAF loop
-  const speechSinceRef = useRef<number | null>(null);
-  const silenceSinceRef = useRef<number | null>(null);
-  const recordStartRef = useRef<number>(0);
-
-  // Stable refs to latest callbacks (avoids stale closure issues in RAF loop)
-  const sendAudioRef = useRef<(blob: Blob) => Promise<void>>(async () => {});
-  const handleReminderRef = useRef<(r: DueReminder) => Promise<void>>(async () => {});
+  // Phase mirrored in a ref so async callbacks always see the latest value
+  const phaseRef = useRef<Phase>("idle");
+  const setPhaseSync = useCallback((p: Phase) => {
+    phaseRef.current = p;
+    setPhase(p);
+  }, []);
 
   const t = useCallback(
     (fr: string, en: string) => (language === "fr" ? fr : en),
     [language]
   );
-
-  // Keep phaseRef in sync with React state
-  const setPhaseSync = useCallback((p: Phase) => {
-    phaseRef.current = p;
-    setPhase(p);
-  }, []);
 
   // ── Clock ────────────────────────────────────────────────────────────────────
 
@@ -95,28 +82,40 @@ export function AlwaysOn({
     return () => clearInterval(id);
   }, [language]);
 
-  // ── Audio helpers ────────────────────────────────────────────────────────────
+  // ── Audio helpers ─────────────────────────────────────────────────────────────
+
+  const stopCurrentAudio = useCallback(() => {
+    if (currentSrcRef.current) {
+      try { currentSrcRef.current.stop(); } catch { /* already stopped */ }
+      currentSrcRef.current = null;
+    }
+  }, []);
 
   const playEncoded = useCallback(async (base64: string): Promise<void> => {
     const ctx = ctxRef.current;
     if (!ctx) return;
-    // Browsers suspend AudioContext after inactivity — resume before every playback
     if (ctx.state !== "running") await ctx.resume();
     const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
     const buffer = await ctx.decodeAudioData(bytes.buffer);
     return new Promise<void>((resolve) => {
+      stopCurrentAudio();
       const src = ctx.createBufferSource();
       src.buffer = buffer;
       src.connect(ctx.destination);
-      src.onended = () => resolve();
+      currentSrcRef.current = src;
+      src.onended = () => {
+        currentSrcRef.current = null;
+        resolve();
+      };
       src.start();
     });
-  }, []);
+  }, [stopCurrentAudio]);
 
   const playJingle = useCallback(async () => {
     const ctx = ctxRef.current;
     if (!ctx) return;
-    const notes = [523.25, 659.25, 783.99]; // C5-E5-G5 gentle chime
+    if (ctx.state !== "running") await ctx.resume();
+    const notes = [523.25, 659.25, 783.99];
     let t0 = ctx.currentTime + 0.02;
     for (const freq of notes) {
       const osc = ctx.createOscillator();
@@ -134,27 +133,26 @@ export function AlwaysOn({
     await new Promise((r) => setTimeout(r, notes.length * 220 + 250));
   }, []);
 
-  // ── Conversation ─────────────────────────────────────────────────────────────
+  // ── API call ─────────────────────────────────────────────────────────────────
 
-  const sendAudio = useCallback(
-    async (blob: Blob) => {
-      busyRef.current = true;
+  const sendQuery = useCallback(
+    async (query: string) => {
+      clearTimeout(activatedTimerRef.current!);
       setPhaseSync("thinking");
+      setWakeLabel("");
+      setLastUser(query);
       try {
-        const base64 = await blobToBase64(blob);
-        const res = await converse({
+        const res = await apiChat({
           residentId,
-          audioBase64: base64,
-          mimeType: blob.type || "audio/webm",
+          text: query,
           language,
           history: historyRef.current,
         });
         historyRef.current = [
           ...historyRef.current,
-          { role: "user", content: res.transcript },
+          { role: "user", content: query },
           { role: "assistant", content: res.reply },
         ];
-        setLastUser(res.transcript);
         setLastReply(res.reply);
         if (res.confirmation) {
           const c = res.confirmation;
@@ -162,205 +160,207 @@ export function AlwaysOn({
             c.status === "confirmed_taken"
               ? t(`✓ ${c.medicationName} : pris`, `✓ ${c.medicationName}: taken`)
               : c.status === "confirmed_not_taken"
-              ? t(`${c.medicationName} : non pris — soignant prévenu`, `${c.medicationName}: not taken — caregiver alerted`)
-              : t(`${c.medicationName} : à vérifier`, `${c.medicationName}: to verify`)
+              ? t(`${c.medicationName} : non pris`, `${c.medicationName}: not taken`)
+              : t(`${c.medicationName} : à vérifier`, `${c.medicationName}: check with caregiver`)
           );
         }
         setPhaseSync("speaking");
         await playEncoded(res.audioBase64);
-        await new Promise((r) => setTimeout(r, ECHO_COOLDOWN_MS));
+        await new Promise((r) => setTimeout(r, ECHO_COOLDOWN));
       } catch {
-        setError(t("Erreur réseau — je réessaie.", "Network error — retrying."));
-        setTimeout(() => setError(""), 4_000);
+        setError(t("Erreur réseau — réessayez.", "Network error — try again."));
+        setTimeout(() => setError(""), 3_500);
       } finally {
-        busyRef.current = false;
-        setPhaseSync("listening");
-        speechSinceRef.current = null;
-        silenceSinceRef.current = null;
+        setPhaseSync("passive");
       }
     },
     [residentId, language, playEncoded, t, setPhaseSync]
   );
 
-  // Keep the RAF loop's ref to sendAudio always current
-  useEffect(() => {
-    sendAudioRef.current = sendAudio;
-  }, [sendAudio]);
+  // Ref so the SpeechRecognition handler always calls the latest version
+  const sendQueryRef = useRef(sendQuery);
+  useEffect(() => { sendQueryRef.current = sendQuery; }, [sendQuery]);
 
-  // ── Medication reminders ──────────────────────────────────────────────────────
+  // ── Medication reminders (highest priority) ───────────────────────────────────
 
   const handleReminder = useCallback(
     async (reminder: DueReminder) => {
-      busyRef.current = true;
+      stopCurrentAudio();
+      clearTimeout(activatedTimerRef.current!);
       announcedRef.current.add(reminder.id);
       setPhaseSync("announcing");
       try {
         await playJingle();
         const ann = await announce(residentId, reminder.id);
         setLastReply(ann.text);
+        setLastUser("");
         await playEncoded(ann.audioBase64);
-        // After the announcement the resident may answer naturally →
-        // the VAD will pick that up as a normal turn.
-        await new Promise((r) => setTimeout(r, ECHO_COOLDOWN_MS));
-      } catch {
-        /* transient — skip, will retry next poll */
-      } finally {
-        busyRef.current = false;
-        setPhaseSync("listening");
-        speechSinceRef.current = null;
-        silenceSinceRef.current = null;
+        await new Promise((r) => setTimeout(r, ECHO_COOLDOWN));
+      } catch { /* transient — skip, poll again next round */ }
+      finally {
+        setPhaseSync("passive");
       }
     },
-    [residentId, playJingle, playEncoded, setPhaseSync]
+    [residentId, stopCurrentAudio, playJingle, playEncoded, setPhaseSync]
   );
 
-  useEffect(() => {
-    handleReminderRef.current = handleReminder;
-  }, [handleReminder]);
+  const handleReminderRef = useRef(handleReminder);
+  useEffect(() => { handleReminderRef.current = handleReminder; }, [handleReminder]);
 
   const poll = useCallback(async () => {
-    if (busyRef.current) return;
+    if (phaseRef.current === "announcing") return;
     try {
       const due = await getDueReminders(residentId);
       const next = due.find((r) => !announcedRef.current.has(r.id));
       if (next) await handleReminderRef.current(next);
-    } catch {
-      /* ignore transient errors */
-    }
+    } catch { /* ignore */ }
   }, [residentId]);
 
-  // ── VAD loop (runs every animation frame) ────────────────────────────────────
+  // ── Speech recognition ────────────────────────────────────────────────────────
 
-  const stopRecorder = useCallback(() => {
-    const recorder = recorderRef.current;
-    if (!recorder || recorder.state !== "recording") return;
-    recorder.onstop = () => {
-      const elapsed = Date.now() - recordStartRef.current;
-      if (elapsed < MIN_RECORD_MS) {
-        // Too short — just noise, reset
-        busyRef.current = false;
-        setPhaseSync("listening");
+  const processTranscript = useCallback(
+    (text: string) => {
+      const lower = text.toLowerCase().trim();
+      const current = phaseRef.current;
+
+      // Reminders are never interrupted by speech
+      if (current === "announcing") return;
+      // During API call, nothing to do
+      if (current === "thinking") return;
+
+      if (current === "speaking") {
+        // Allow interruption only if wake word is detected
+        if (!lower.includes(WAKE_WORD)) return;
+        stopCurrentAudio();
+        const afterWake = extractAfterWakeWord(lower);
+        if (afterWake) {
+          void sendQueryRef.current(afterWake);
+        } else {
+          armActivated();
+        }
         return;
       }
-      const blob = new Blob(chunksRef.current, {
-        type: chunksRef.current[0]?.type || "audio/webm",
-      });
-      void sendAudioRef.current(blob);
-    };
-    recorder.stop();
-  }, [setPhaseSync]);
 
-  const startRecorder = useCallback(() => {
-    const stream = streamRef.current;
-    if (!stream) return;
-    chunksRef.current = [];
-    const recorder = new MediaRecorder(stream);
-    recorder.ondataavailable = (e) => {
-      if (e.data.size > 0) chunksRef.current.push(e.data);
-    };
-    recorderRef.current = recorder;
-    recorder.start();
-    recordStartRef.current = Date.now();
-    setPhaseSync("speech");
-  }, [setPhaseSync]);
-
-  // stopRecorderRef so the RAF loop can call the latest stopRecorder
-  const stopRecorderRef = useRef(stopRecorder);
-  const startRecorderRef = useRef(startRecorder);
-  useEffect(() => { stopRecorderRef.current = stopRecorder; }, [stopRecorder]);
-  useEffect(() => { startRecorderRef.current = startRecorder; }, [startRecorder]);
-
-  const vadLoop = useCallback(() => {
-    const analyser = analyserRef.current;
-    if (!analyser) return;
-
-    analyser.getFloatTimeDomainData(dataRef.current);
-    const rms = Math.sqrt(
-      dataRef.current.reduce((sum, x) => sum + x * x, 0) / dataRef.current.length
-    );
-    // Normalize to 0–1 range for the visual (0.1 RMS = max visual)
-    setRmsLevel(Math.min(1, rms / 0.08));
-
-    if (!busyRef.current) {
-      const now = Date.now();
-      const currentPhase = phaseRef.current;
-
-      if (rms > SPEECH_RMS) {
-        silenceSinceRef.current = null;
-        if (currentPhase === "listening") {
-          if (speechSinceRef.current === null) {
-            speechSinceRef.current = now;
-          } else if (now - speechSinceRef.current >= SPEECH_DEBOUNCE) {
-            // Do NOT set busyRef=true here — silence detection runs inside the
-            // same !busyRef block and would be permanently blocked.
-            startRecorderRef.current();
-          }
+      if (current === "passive") {
+        if (!lower.includes(WAKE_WORD)) return;
+        const afterWake = extractAfterWakeWord(lower);
+        if (afterWake) {
+          void sendQueryRef.current(afterWake);
+        } else {
+          armActivated();
         }
-      } else {
-        speechSinceRef.current = null;
-        if (currentPhase === "speech") {
-          if (silenceSinceRef.current === null) {
-            silenceSinceRef.current = now;
-          } else if (now - silenceSinceRef.current >= SILENCE_DEBOUNCE) {
-            silenceSinceRef.current = null;
-            busyRef.current = true; // block VAD until API response is back
-            stopRecorderRef.current();
-          }
+        return;
+      }
+
+      if (current === "activated") {
+        if (lower.length > 2) {
+          void sendQueryRef.current(lower);
         }
       }
+    },
+    [stopCurrentAudio, setPhaseSync, t] // eslint-disable-line react-hooks/exhaustive-deps
+  );
+
+  // Extracted helpers (plain functions, not hooks)
+  function extractAfterWakeWord(lower: string): string {
+    const idx = lower.indexOf(WAKE_WORD);
+    if (idx === -1) return "";
+    return lower.slice(idx + WAKE_WORD.length).replace(/^[,!?\s]+/, "").trim();
+  }
+
+  function armActivated() {
+    clearTimeout(activatedTimerRef.current!);
+    setPhaseSync("activated");
+    setWakeLabel(t("Oui ? Je vous écoute…", "Yes? I'm listening…"));
+    activatedTimerRef.current = setTimeout(() => {
+      if (phaseRef.current === "activated") {
+        setPhaseSync("passive");
+        setWakeLabel("");
+      }
+    }, ACTIVATED_TIMEOUT);
+  }
+
+  const processTranscriptRef = useRef(processTranscript);
+  useEffect(() => { processTranscriptRef.current = processTranscript; }, [processTranscript]);
+
+  const startRecognition = useCallback(() => {
+    const API =
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition;
+    if (!API) {
+      setBrowserOk(false);
+      return;
     }
+    const rec = new API();
+    rec.continuous = true;
+    rec.interimResults = false; // final results only — avoids partial "dan..." triggers
+    rec.lang = language === "fr" ? "fr-FR" : "en-US";
 
-    rafRef.current = requestAnimationFrame(vadLoop);
-  }, []); // empty deps — reads everything through stable refs
+    rec.onresult = (event: any) => {
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        if (event.results[i].isFinal) {
+          processTranscriptRef.current(event.results[i][0].transcript as string);
+        }
+      }
+    };
 
-  // ── Start / cleanup ──────────────────────────────────────────────────────────
+    rec.onerror = (event: any) => {
+      // 'no-speech' and 'aborted' are routine — don't alarm the user
+      if (event.error !== "no-speech" && event.error !== "aborted") {
+        setError(`${t("Micro :", "Mic:")} ${event.error as string}`);
+        setTimeout(() => setError(""), 3_000);
+      }
+    };
+
+    // Chrome sometimes stops continuous recognition after silence — restart it
+    rec.onend = () => {
+      if (listeningRef.current) {
+        setTimeout(() => {
+          if (listeningRef.current && recogRef.current) {
+            try { recogRef.current.start(); } catch { /* already started */ }
+          }
+        }, 300);
+      }
+    };
+
+    recogRef.current = rec;
+    try { rec.start(); } catch { /* ignore if already started */ }
+  }, [language, t]);
+
+  // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
   const start = useCallback(async () => {
     setError("");
     try {
       const Ctx = window.AudioContext || (window as any).webkitAudioContext;
-      const audioCtx = new Ctx();
-      await audioCtx.resume();
-      ctxRef.current = audioCtx;
-
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
-
-      const source = audioCtx.createMediaStreamSource(stream);
-      const analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 512;
-      dataRef.current = new Float32Array(analyser.fftSize);
-      source.connect(analyser);
-      // intentionally NOT connecting analyser to destination — we don't play back mic input
-      analyserRef.current = analyser;
-
-      try {
-        wakeRef.current = await (navigator as any).wakeLock?.request("screen");
-      } catch { /* unsupported — fine */ }
+      const ctx = new Ctx();
+      await ctx.resume();
+      ctxRef.current = ctx;
 
       // Keep AudioContext alive — browsers suspend it after ~30s of silence
       keepAliveRef.current = setInterval(async () => {
-        const ctx = ctxRef.current;
-        if (ctx && ctx.state === "suspended") {
-          await ctx.resume().catch(() => undefined);
+        if (ctxRef.current?.state === "suspended") {
+          await ctxRef.current.resume().catch(() => undefined);
         }
       }, 8_000);
 
-      setPhaseSync("listening");
-      rafRef.current = requestAnimationFrame(vadLoop);
+      try {
+        wakeRef.current = await (navigator as any).wakeLock?.request("screen");
+      } catch { /* unsupported */ }
+
+      listeningRef.current = true;
+      startRecognition();
+      setPhaseSync("passive");
+
       void poll();
       pollRef.current = setInterval(poll, POLL_MS);
     } catch {
       setError(
-        t(
-          "Autorisez le microphone pour activer l'écoute permanente.",
-          "Allow the microphone to enable always-on listening."
-        )
+        t("Erreur au démarrage. Rechargez la page.", "Startup error. Please reload.")
       );
     }
-  }, [vadLoop, poll, t, setPhaseSync]);
+  }, [startRecognition, poll, t, setPhaseSync]);
 
-  // Re-acquire wake lock when tab becomes visible again
   useEffect(() => {
     const onVisible = async () => {
       if (document.visibilityState === "visible" && phaseRef.current !== "idle") {
@@ -373,20 +373,36 @@ export function AlwaysOn({
     return () => document.removeEventListener("visibilitychange", onVisible);
   }, []);
 
-  // Full cleanup on unmount
   useEffect(() => {
     return () => {
-      cancelAnimationFrame(rafRef.current);
-      clearInterval(pollRef.current);
-      clearInterval(keepAliveRef.current);
-      if (recorderRef.current?.state === "recording") recorderRef.current.stop();
-      streamRef.current?.getTracks().forEach((tr) => tr.stop());
+      listeningRef.current = false;
+      clearInterval(pollRef.current!);
+      clearInterval(keepAliveRef.current!);
+      clearTimeout(activatedTimerRef.current!);
+      try { recogRef.current?.stop(); } catch { /* ignore */ }
+      stopCurrentAudio();
       wakeRef.current?.release?.().catch(() => undefined);
       ctxRef.current?.close().catch(() => undefined);
     };
-  }, []);
+  }, [stopCurrentAudio]);
 
-  // ── Render ───────────────────────────────────────────────────────────────────
+  // ── Render ────────────────────────────────────────────────────────────────────
+
+  if (!browserOk) {
+    return (
+      <div className="h-full flex flex-col items-center justify-center gap-6 px-8 text-center">
+        <p className="text-white text-xl leading-relaxed">
+          {t(
+            "Ce navigateur ne supporte pas la reconnaissance vocale. Utilisez Chrome.",
+            "This browser doesn't support speech recognition. Please use Chrome."
+          )}
+        </p>
+        <button onClick={onExit} className="text-white/70 underline text-lg">
+          {t("Retour", "Back")}
+        </button>
+      </div>
+    );
+  }
 
   if (phase === "idle") {
     return (
@@ -402,58 +418,54 @@ export function AlwaysOn({
         </p>
         <p className="text-white/70 text-lg max-w-xs leading-relaxed">
           {t(
-            "Après ça, parlez librement — plus besoin de toucher l'écran.",
-            "After this, speak freely — no need to touch the screen again."
+            "Dites « Daniel » à tout moment pour me parler.",
+            "Say \"Daniel\" at any time to talk to me."
           )}
         </p>
         {error && (
-          <p className="bg-red-500/80 text-white rounded-xl px-4 py-2 text-base">{error}</p>
+          <p className="mt-2 bg-red-500/80 text-white rounded-xl px-4 py-2 text-base">
+            {error}
+          </p>
         )}
       </button>
     );
   }
 
-  // Visual ring: size + color reflect current phase
-  const ringScale = phase === "speech" ? 1 + rmsLevel * 0.5 : 1;
-  const ringClass =
-    phase === "speaking" || phase === "announcing"
-      ? "bg-blue-400 animate-pulse"
-      : phase === "thinking"
-      ? "bg-yellow-300"
-      : phase === "speech"
-      ? "bg-red-400"
-      : `bg-white/25`; // listening: dim white ring
-
   const statusText =
-    phase === "speech"
-      ? t("Je vous écoute…", "I'm listening…")
+    phase === "activated"
+      ? wakeLabel || t("Oui ? Je vous écoute…", "Yes? I'm listening…")
       : phase === "thinking"
       ? t("Un instant…", "One moment…")
       : phase === "speaking"
-      ? t("Je vous réponds…", "Replying…")
+      ? t("Je vous réponds… (dites « Daniel » pour interrompre)", 'Replying… (say "Daniel" to interrupt)')
       : phase === "announcing"
       ? t("Rappel médicaments 💊", "Medication reminder 💊")
-      : t("En écoute — parlez librement", "Listening — speak freely");
+      : t("En écoute — dites « Daniel »", 'Listening — say "Daniel"');
+
+  const ringClass =
+    phase === "activated"
+      ? "bg-green-400 scale-110"
+      : phase === "thinking"
+      ? "bg-yellow-300"
+      : phase === "speaking" || phase === "announcing"
+      ? "bg-blue-400"
+      : "bg-white/20"; // passive: subtle dim ring
 
   return (
     <div className="h-full flex flex-col items-center justify-center gap-5 px-6 text-center">
       <div className="text-6xl font-light tabular-nums opacity-80">{clock}</div>
 
-      {/* VAD ring — pulses with voice level */}
-      <div className="relative flex items-center justify-center h-36">
-        {/* Outer glow for speaking/announcing */}
-        {(phase === "speaking" || phase === "announcing") && (
-          <div className="absolute w-36 h-36 rounded-full bg-blue-400/20 animate-ping" />
+      <div className="relative flex items-center justify-center h-32">
+        {(phase === "speaking" || phase === "announcing" || phase === "activated") && (
+          <div className={`absolute w-36 h-36 rounded-full animate-ping opacity-30 ${
+            phase === "activated" ? "bg-green-400" : "bg-blue-400"
+          }`} />
         )}
-        <div
-          className={`w-28 h-28 rounded-full transition-transform duration-75 ${ringClass}`}
-          style={{ transform: `scale(${ringScale})` }}
-        />
+        <div className={`w-28 h-28 rounded-full transition-all duration-200 ${ringClass}`} />
       </div>
 
-      <p className="text-white text-xl font-medium">{statusText}</p>
+      <p className="text-white text-lg font-medium min-h-[2.5rem] max-w-xs">{statusText}</p>
 
-      {/* Conversation display */}
       <div className="w-full max-w-md flex flex-col gap-3 min-h-[7rem]">
         {lastUser && (
           <p className="text-white/55 text-right text-sm italic">« {lastUser} »</p>
@@ -464,7 +476,7 @@ export function AlwaysOn({
           </div>
         )}
         {badge && (
-          <div className="bg-green-600/90 text-white rounded-xl px-4 py-2 font-medium text-base">
+          <div className="bg-green-600/90 text-white rounded-xl px-4 py-2 font-medium">
             {badge}
           </div>
         )}
@@ -474,17 +486,8 @@ export function AlwaysOn({
       </div>
 
       <button onClick={onExit} className="mt-2 text-white/55 underline text-base">
-        {t("Quitter l'écoute", "Exit listening")}
+        {t("Quitter", "Exit")}
       </button>
     </div>
   );
-}
-
-function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => resolve((reader.result as string).split(",")[1] ?? "");
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
 }

@@ -30,6 +30,13 @@ export interface ConverseResult {
   };
 }
 
+export interface ChatTextInput {
+  residentId: string;
+  text: string;
+  language?: "fr" | "en";
+  history?: ChatMessage[];
+}
+
 export interface AnnounceInput {
   residentId: string;
   reminderId: string;
@@ -163,6 +170,85 @@ export class VoiceService {
     await this.audit.log({
       actorType: "ai",
       action: "voice.conversation",
+      entityType: "Resident",
+      entityId: input.residentId,
+      metadata: {
+        transcriptLength: transcript.length,
+        replyLength: reply.length,
+        language,
+        remindersDue: reminderRefs.length,
+        confirmed: confirmation?.status ?? null,
+      },
+    });
+
+    return {
+      transcript,
+      reply,
+      audioBase64: speechOut.audio.toString("base64"),
+      audioMimeType: speechOut.mimeType,
+      confirmation,
+    };
+  }
+
+  /**
+   * Text-based conversational turn — same as converse() but skips Whisper STT.
+   * Used when the client already has a transcript (e.g. Web Speech API wake-word flow).
+   */
+  async chatText(input: ChatTextInput): Promise<ConverseResult> {
+    if (!this.configured) {
+      throw new Error("Voice companion is not configured (missing OPENAI_API_KEY).");
+    }
+
+    const resident = await this.loadResident(input.residentId);
+    const language = input.language ?? (resident?.language as "fr" | "en") ?? "fr";
+
+    const pending = resident ? await this.loadDueReminders(resident.id) : [];
+    const dueReminders: DueReminder[] = pending.map((p) => ({
+      medicationName: p.medicationSchedule.medication.name,
+      timeOfDay: p.medicationSchedule.timeOfDay,
+    }));
+    const reminderRefs: MedicationReminderRef[] = pending.map((p) => ({
+      id: p.id,
+      medicationName: p.medicationSchedule.medication.name,
+    }));
+
+    const transcript = input.text;
+
+    const messages: ChatMessage[] = [
+      ...(input.history ?? []),
+      { role: "user", content: transcript },
+    ];
+    const { text: reply } = await this.chat.reply(
+      { residentId: input.residentId, messages },
+      {
+        language,
+        residentFirstName: resident?.preferredName ?? resident?.firstName,
+        dueReminders,
+      },
+    );
+
+    let confirmation: ConverseResult["confirmation"];
+    if (reminderRefs.length > 0) {
+      const classified = await this.chat.classifyMedicationResponse({
+        transcript,
+        reminders: reminderRefs,
+        language,
+      });
+      if (classified) {
+        confirmation = await this.recordConfirmation(
+          classified.reminderId,
+          classified.status,
+          transcript,
+          reminderRefs,
+        );
+      }
+    }
+
+    const speechOut = await this.speech.synthesize({ text: reply, language });
+
+    await this.audit.log({
+      actorType: "ai",
+      action: "voice.chat",
       entityType: "Resident",
       entityId: input.residentId,
       metadata: {

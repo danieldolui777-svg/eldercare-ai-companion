@@ -30,6 +30,22 @@ export async function getResidents(): Promise<Resident[]> {
   return res.json() as Promise<Resident[]>;
 }
 
+/** Text-based turn — client already has the transcript (Web Speech API wake-word flow). */
+export async function chat(data: {
+  residentId: string;
+  text: string;
+  language?: "fr" | "en";
+  history?: ChatTurn[];
+}): Promise<ConverseResponse> {
+  const res = await fetch(`${BASE}/voice/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(`API ${res.status}`);
+  return res.json() as Promise<ConverseResponse>;
+}
+
 export async function converse(data: {
   residentId: string;
   audioBase64: string;
