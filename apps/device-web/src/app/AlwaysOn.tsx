@@ -53,6 +53,7 @@ export function AlwaysOn({
   // System refs
   const wakeRef = useRef<any>(null);
   const pollRef = useRef<any>(null);
+  const keepAliveRef = useRef<any>(null);
   const rafRef = useRef<number>(0);
   const historyRef = useRef<ChatTurn[]>([]);
   const announcedRef = useRef<Set<string>>(new Set());
@@ -99,6 +100,8 @@ export function AlwaysOn({
   const playEncoded = useCallback(async (base64: string): Promise<void> => {
     const ctx = ctxRef.current;
     if (!ctx) return;
+    // Browsers suspend AudioContext after inactivity — resume before every playback
+    if (ctx.state !== "running") await ctx.resume();
     const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
     const buffer = await ctx.decodeAudioData(bytes.buffer);
     return new Promise<void>((resolve) => {
@@ -333,6 +336,14 @@ export function AlwaysOn({
         wakeRef.current = await (navigator as any).wakeLock?.request("screen");
       } catch { /* unsupported — fine */ }
 
+      // Keep AudioContext alive — browsers suspend it after ~30s of silence
+      keepAliveRef.current = setInterval(async () => {
+        const ctx = ctxRef.current;
+        if (ctx && ctx.state === "suspended") {
+          await ctx.resume().catch(() => undefined);
+        }
+      }, 8_000);
+
       setPhaseSync("listening");
       rafRef.current = requestAnimationFrame(vadLoop);
       void poll();
@@ -365,6 +376,7 @@ export function AlwaysOn({
     return () => {
       cancelAnimationFrame(rafRef.current);
       clearInterval(pollRef.current);
+      clearInterval(keepAliveRef.current);
       if (recorderRef.current?.state === "recording") recorderRef.current.stop();
       streamRef.current?.getTracks().forEach((tr) => tr.stop());
       wakeRef.current?.release?.().catch(() => undefined);
@@ -376,29 +388,26 @@ export function AlwaysOn({
 
   if (phase === "idle") {
     return (
-      <div className="h-full flex flex-col items-center justify-center gap-8 px-6 text-center">
-        <h1 className="text-3xl font-bold">
-          {t("Mode écoute permanente", "Always-on listening")}
-        </h1>
-        <p className="text-white/80 text-lg max-w-sm leading-relaxed">
+      <button
+        onClick={start}
+        className="h-full w-full flex flex-col items-center justify-center gap-6 px-8 text-center active:bg-white/10"
+      >
+        <div className="w-40 h-40 rounded-full bg-white/20 flex items-center justify-center text-7xl">
+          🎙️
+        </div>
+        <p className="text-white text-3xl font-bold">
+          {t("Touchez pour démarrer", "Tap to start")}
+        </p>
+        <p className="text-white/70 text-lg max-w-xs leading-relaxed">
           {t(
-            "L'appareil vous écoute en permanence et vous répond dès que vous parlez — sans appuyer sur rien.",
-            "The device listens at all times and responds as soon as you speak — no button needed."
+            "Après ça, parlez librement — plus besoin de toucher l'écran.",
+            "After this, speak freely — no need to touch the screen again."
           )}
         </p>
-        <button
-          onClick={start}
-          className="w-56 h-56 rounded-full bg-white text-brand-700 text-2xl font-bold shadow-2xl active:scale-95"
-        >
-          {t("Démarrer", "Start")}
-        </button>
         {error && (
-          <p className="bg-red-500/80 text-white rounded-xl px-4 py-2">{error}</p>
+          <p className="bg-red-500/80 text-white rounded-xl px-4 py-2 text-base">{error}</p>
         )}
-        <button onClick={onExit} className="text-white/70 underline text-lg">
-          {t("Retour", "Back")}
-        </button>
-      </div>
+      </button>
     );
   }
 

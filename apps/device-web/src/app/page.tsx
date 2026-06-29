@@ -24,7 +24,7 @@ export default function CompanionDevicePage() {
   const [confirmation, setConfirmation] =
     useState<ConverseResponse["confirmation"]>(undefined);
   const [standby, setStandby] = useState(false);
-  const [alwaysOn, setAlwaysOn] = useState(false);
+  const [alwaysOn, setAlwaysOn] = useState(true);
 
   // For the prototype, pick the first resident so the companion is "aware".
   // In a real deployment, one device is bound to one resident.
