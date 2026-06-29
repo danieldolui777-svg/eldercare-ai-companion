@@ -13,14 +13,16 @@ type Phase =
   | "idle"        // before first tap — AudioContext needs a user gesture
   | "passive"     // listening for wake word "daniel"
   | "activated"   // heard "daniel", waiting for the query
-  | "thinking"    // query sent to API, waiting for reply
-  | "speaking"    // playing AI reply (mic still open for interruption)
+  | "thinking"    // fallback text-mode: query sent, waiting for reply
+  | "speaking"    // fallback text-mode: playing reply
+  | "session"     // OpenAI Realtime API — streaming audio in & out
   | "announcing"; // medication reminder — top priority, interrupts everything
 
 const WAKE_WORD = "daniel";
-const ACTIVATED_TIMEOUT = 8_000;  // back to passive if no query arrives in 8s
-const ECHO_COOLDOWN = 700;        // ms to wait after audio finishes before re-listening
-const POLL_MS = 30_000;           // medication reminder check interval
+const ACTIVATED_TIMEOUT = 8_000;
+const ECHO_COOLDOWN = 500;
+const POLL_MS = 30_000;
+const SESSION_IDLE_MS = 30_000; // close Realtime session after 30s of quiet
 
 export function AlwaysOn({
   residentId,
@@ -40,16 +42,27 @@ export function AlwaysOn({
   const [error, setError] = useState("");
   const [browserOk, setBrowserOk] = useState(true);
 
-  // Audio
+  // ── Audio ─────────────────────────────────────────────────────────────────────
   const ctxRef = useRef<AudioContext | null>(null);
+  // For the text-mode (fallback) single audio source:
   const currentSrcRef = useRef<AudioBufferSourceNode | null>(null);
+  // For streaming PCM16 playback (Realtime API):
+  const activeSrcsRef = useRef<AudioBufferSourceNode[]>([]);
+  const nextPlayTimeRef = useRef<number>(0);
   const keepAliveRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Speech recognition
-  const recogRef = useRef<any>(null); // SpeechRecognition
+  // ── Realtime session ──────────────────────────────────────────────────────────
+  const wsRef = useRef<WebSocket | null>(null);
+  const workletNodeRef = useRef<AudioWorkletNode | null>(null);
+  const micStreamRef = useRef<MediaStream | null>(null);
+  const aiPlayingRef = useRef(false);
+  const sessionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── Speech recognition ────────────────────────────────────────────────────────
+  const recogRef = useRef<any>(null);
   const listeningRef = useRef(false);
 
-  // System
+  // ── System ────────────────────────────────────────────────────────────────────
   const wakeRef = useRef<any>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const activatedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -86,12 +99,21 @@ export function AlwaysOn({
   // ── Audio helpers ─────────────────────────────────────────────────────────────
 
   const stopCurrentAudio = useCallback(() => {
+    // Stop text-mode single source
     if (currentSrcRef.current) {
       try { currentSrcRef.current.stop(); } catch { /* already stopped */ }
       currentSrcRef.current = null;
     }
+    // Stop all streaming sources (Realtime mode)
+    for (const src of activeSrcsRef.current) {
+      try { src.stop(); } catch { /* already ended */ }
+    }
+    activeSrcsRef.current = [];
+    nextPlayTimeRef.current = 0;
+    aiPlayingRef.current = false;
   }, []);
 
+  /** Play a single base64-encoded audio blob (TTS fallback path). */
   const playEncoded = useCallback(async (base64: string): Promise<void> => {
     const ctx = ctxRef.current;
     if (!ctx) return;
@@ -104,13 +126,41 @@ export function AlwaysOn({
       src.buffer = buffer;
       src.connect(ctx.destination);
       currentSrcRef.current = src;
-      src.onended = () => {
-        currentSrcRef.current = null;
-        resolve();
-      };
+      src.onended = () => { currentSrcRef.current = null; resolve(); };
       src.start();
     });
   }, [stopCurrentAudio]);
+
+  /** Schedule a base64 PCM16 chunk (24 kHz mono) for gapless streaming playback. */
+  const playPCM16Chunk = useCallback((base64: string) => {
+    const ctx = ctxRef.current;
+    if (!ctx || ctx.state !== "running") return;
+
+    const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
+    const int16 = new Int16Array(bytes.buffer);
+    const float32 = new Float32Array(int16.length);
+    for (let i = 0; i < int16.length; i++) {
+      float32[i] = int16[i] / 32768;
+    }
+
+    const audioBuf = ctx.createBuffer(1, float32.length, 24000);
+    audioBuf.getChannelData(0).set(float32);
+
+    const now = ctx.currentTime;
+    // Keep a 50 ms ahead-of-current buffer to avoid glitches
+    if (nextPlayTimeRef.current < now) nextPlayTimeRef.current = now + 0.05;
+
+    const src = ctx.createBufferSource();
+    src.buffer = audioBuf;
+    src.connect(ctx.destination);
+    src.start(nextPlayTimeRef.current);
+    nextPlayTimeRef.current += audioBuf.duration;
+
+    activeSrcsRef.current.push(src);
+    src.onended = () => {
+      activeSrcsRef.current = activeSrcsRef.current.filter((s) => s !== src);
+    };
+  }, []);
 
   const playJingle = useCallback(async () => {
     const ctx = ctxRef.current;
@@ -134,9 +184,183 @@ export function AlwaysOn({
     await new Promise((r) => setTimeout(r, notes.length * 220 + 250));
   }, []);
 
-  // ── API call ─────────────────────────────────────────────────────────────────
+  // ── Realtime session ──────────────────────────────────────────────────────────
 
-  const sendQuery = useCallback(
+  const closeRealtimeSessionRef = useRef<() => void>(() => {});
+
+  const closeRealtimeSession = useCallback(() => {
+    clearTimeout(sessionTimerRef.current!);
+    workletNodeRef.current?.disconnect();
+    workletNodeRef.current = null;
+    micStreamRef.current?.getTracks().forEach((tr) => tr.stop());
+    micStreamRef.current = null;
+    const ws = wsRef.current;
+    if (ws && ws.readyState <= WebSocket.OPEN) ws.close();
+    wsRef.current = null;
+    stopCurrentAudio();
+    if (phaseRef.current === "session") setPhaseSync("passive");
+  }, [setPhaseSync, stopCurrentAudio]);
+
+  useEffect(() => {
+    closeRealtimeSessionRef.current = closeRealtimeSession;
+  }, [closeRealtimeSession]);
+
+  const resetSessionTimer = useCallback(() => {
+    clearTimeout(sessionTimerRef.current!);
+    sessionTimerRef.current = setTimeout(() => {
+      closeRealtimeSessionRef.current();
+    }, SESSION_IDLE_MS);
+  }, []);
+
+  /**
+   * Opens an OpenAI Realtime session via the backend proxy WebSocket.
+   * @param initialText Optional text already captured by Web Speech API — sent as
+   *   the first turn so the latency of that first response matches text mode.
+   */
+  const openRealtimeSession = useCallback(
+    async (initialText?: string) => {
+      if (wsRef.current) return; // already in session
+
+      clearTimeout(activatedTimerRef.current!);
+      setPhaseSync("session");
+      setWakeLabel(t("Connexion…", "Connecting…"));
+      setLastUser(initialText ?? "");
+      setLastReply("");
+
+      const ctx = ctxRef.current!;
+      if (!ctx) return;
+      if (ctx.state !== "running") await ctx.resume();
+
+      // ── Derive WebSocket URL from HTTP API base ──────────────────────────────
+      const base = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1";
+      const wsBase = base
+        .replace(/\/api\/v1\/?$/, "")
+        .replace(/^https/, "wss")
+        .replace(/^http(?!s)/, "ws");
+      const wsUrl = `${wsBase}/voice/realtime?residentId=${encodeURIComponent(residentId)}&language=${language}`;
+
+      let ws: WebSocket;
+      try {
+        ws = new WebSocket(wsUrl);
+      } catch {
+        setError(t("Impossible de se connecter.", "Unable to connect."));
+        setTimeout(() => setError(""), 3_000);
+        setPhaseSync("passive");
+        return;
+      }
+      wsRef.current = ws;
+
+      // ── Microphone + AudioWorklet setup ─────────────────────────────────────
+      let workletReady = false;
+      (async () => {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+            },
+          });
+          micStreamRef.current = stream;
+          await ctx.audioWorklet.addModule("/worklets/pcm-processor.js");
+          const source = ctx.createMediaStreamSource(stream);
+          const node = new AudioWorkletNode(ctx, "pcm-processor");
+          workletNodeRef.current = node;
+          source.connect(node);
+          workletReady = true;
+
+          node.port.onmessage = (ev: MessageEvent) => {
+            if (aiPlayingRef.current) return; // don't send during AI speech
+            if (ws.readyState !== WebSocket.OPEN) return;
+            const pcm = new Uint8Array(ev.data.pcm16 as ArrayBuffer);
+            // Fast binary-to-base64 via DataURL approach
+            let binary = "";
+            const chunkSize = 8192;
+            for (let i = 0; i < pcm.length; i += chunkSize) {
+              binary += String.fromCharCode(...pcm.subarray(i, i + chunkSize));
+            }
+            ws.send(JSON.stringify({ type: "audio", data: btoa(binary) }));
+          };
+        } catch (err: any) {
+          setError(t("Micro inaccessible.", "Microphone unavailable."));
+          setTimeout(() => setError(""), 3_500);
+          closeRealtimeSessionRef.current();
+        }
+      })();
+
+      // ── WebSocket events ─────────────────────────────────────────────────────
+      ws.onopen = () => {
+        setWakeLabel(t("Je vous écoute…", "I'm listening…"));
+        resetSessionTimer();
+
+        // If we already have the user's text, send it as the first message so
+        // the response starts immediately without waiting for audio buffering.
+        if (initialText) {
+          ws.send(
+            JSON.stringify({
+              type: "text",
+              data: initialText,
+              language,
+            }),
+          );
+        }
+      };
+
+      ws.onmessage = (ev) => {
+        let msg: Record<string, any>;
+        try { msg = JSON.parse(ev.data as string); } catch { return; }
+
+        switch (msg.type as string) {
+          case "audio":
+            aiPlayingRef.current = true;
+            playPCM16Chunk(msg.delta as string);
+            break;
+
+          case "speech_started":
+            // User started speaking — interrupt AI audio immediately
+            stopCurrentAudio();
+            break;
+
+          case "transcript":
+            setLastUser(msg.text as string);
+            resetSessionTimer();
+            break;
+
+          case "reply":
+            setLastReply(msg.text as string);
+            break;
+
+          case "response.done":
+            aiPlayingRef.current = false;
+            resetSessionTimer();
+            break;
+
+          case "error":
+            setError(t("Erreur Realtime.", "Realtime error."));
+            setTimeout(() => setError(""), 3_500);
+            closeRealtimeSessionRef.current();
+            break;
+        }
+      };
+
+      ws.onclose = () => {
+        if (phaseRef.current === "session") closeRealtimeSessionRef.current();
+      };
+
+      ws.onerror = () => {
+        if (phaseRef.current === "session") {
+          setError(t("Connexion perdue.", "Connection lost."));
+          setTimeout(() => setError(""), 3_000);
+          closeRealtimeSessionRef.current();
+        }
+      };
+    },
+    [residentId, language, t, setPhaseSync, playPCM16Chunk, stopCurrentAudio, resetSessionTimer]
+  );
+
+  // ── Fallback text-mode API call (used if Realtime is unavailable) ─────────────
+
+  const sendQueryFallback = useCallback(
     async (query: string) => {
       clearTimeout(activatedTimerRef.current!);
       setPhaseSync("thinking");
@@ -178,14 +402,15 @@ export function AlwaysOn({
     [residentId, language, playEncoded, t, setPhaseSync]
   );
 
-  // Ref so the SpeechRecognition handler always calls the latest version
-  const sendQueryRef = useRef(sendQuery);
-  useEffect(() => { sendQueryRef.current = sendQuery; }, [sendQuery]);
+  const sendQueryFallbackRef = useRef(sendQueryFallback);
+  useEffect(() => { sendQueryFallbackRef.current = sendQueryFallback; }, [sendQueryFallback]);
 
   // ── Medication reminders (highest priority) ───────────────────────────────────
 
   const handleReminder = useCallback(
     async (reminder: DueReminder) => {
+      // Interrupt any ongoing session or audio
+      closeRealtimeSessionRef.current();
       stopCurrentAudio();
       clearTimeout(activatedTimerRef.current!);
       announcedRef.current.add(reminder.id);
@@ -217,52 +442,41 @@ export function AlwaysOn({
     } catch { /* ignore */ }
   }, [residentId]);
 
-  // ── Speech recognition ────────────────────────────────────────────────────────
+  // ── Speech recognition (wake word "daniel") ───────────────────────────────────
 
   const processTranscript = useCallback(
     (text: string) => {
       const lower = text.toLowerCase().trim();
       const current = phaseRef.current;
 
-      // Reminders are never interrupted by speech
-      if (current === "announcing") return;
-      // During API call, nothing to do
-      if (current === "thinking") return;
+      if (current === "announcing" || current === "thinking") return;
+      // In session mode: Web Speech API output is ignored (server VAD handles turns)
+      if (current === "session") return;
 
       if (current === "speaking") {
-        // Allow interruption only if wake word is detected
         if (!lower.includes(WAKE_WORD)) return;
         stopCurrentAudio();
         const afterWake = extractAfterWakeWord(lower);
-        if (afterWake) {
-          void sendQueryRef.current(afterWake);
-        } else {
-          armActivated();
-        }
+        void openRealtimeSession(afterWake || undefined);
         return;
       }
 
       if (current === "passive") {
         if (!lower.includes(WAKE_WORD)) return;
         const afterWake = extractAfterWakeWord(lower);
-        if (afterWake) {
-          void sendQueryRef.current(afterWake);
-        } else {
-          armActivated();
-        }
+        void openRealtimeSession(afterWake || undefined);
         return;
       }
 
       if (current === "activated") {
         if (lower.length > 2) {
-          void sendQueryRef.current(lower);
+          void openRealtimeSession(lower);
         }
       }
     },
-    [stopCurrentAudio, setPhaseSync, t] // eslint-disable-line react-hooks/exhaustive-deps
+    [stopCurrentAudio, openRealtimeSession] // eslint-disable-line react-hooks/exhaustive-deps
   );
 
-  // Extracted helpers (plain functions, not hooks)
   function extractAfterWakeWord(lower: string): string {
     const idx = lower.indexOf(WAKE_WORD);
     if (idx === -1) return "";
@@ -288,10 +502,8 @@ export function AlwaysOn({
     const API =
       (window as any).SpeechRecognition ||
       (window as any).webkitSpeechRecognition;
-    if (!API) {
-      setBrowserOk(false);
-      return;
-    }
+    if (!API) { setBrowserOk(false); return; }
+
     const rec = new API();
     rec.continuous = true;
     rec.interimResults = true;
@@ -303,44 +515,31 @@ export function AlwaysOn({
         const isFinal = event.results[i].isFinal as boolean;
 
         if (!isFinal) {
-          // Interim result: only use it to give IMMEDIATE visual feedback when
-          // "daniel" is heard — don't send the query yet (transcript incomplete).
+          // Interim: give immediate visual feedback on "daniel"
           const lower = transcript.toLowerCase();
           if (
             lower.includes(WAKE_WORD) &&
             (phaseRef.current === "passive" || phaseRef.current === "speaking")
           ) {
             if (phaseRef.current === "speaking") stopCurrentAudio();
-            if (phaseRef.current !== "activated") {
-              setPhaseSync("activated");
-              setWakeLabel(t("Oui ? Je vous écoute…", "Yes? I'm listening…"));
-              clearTimeout(activatedTimerRef.current!);
-              activatedTimerRef.current = setTimeout(() => {
-                if (phaseRef.current === "activated") {
-                  setPhaseSync("passive");
-                  setWakeLabel("");
-                }
-              }, ACTIVATED_TIMEOUT);
-            }
+            armActivated();
           }
           continue;
         }
 
-        // Final result: full processing (query extraction, send to API…)
         processTranscriptRef.current(transcript);
       }
     };
 
     rec.onerror = (event: any) => {
-      // 'no-speech' and 'aborted' are routine — don't alarm the user
       if (event.error !== "no-speech" && event.error !== "aborted") {
         setError(`${t("Micro :", "Mic:")} ${event.error as string}`);
         setTimeout(() => setError(""), 3_000);
       }
     };
 
-    // Chrome sometimes stops continuous recognition after silence — restart it
     rec.onend = () => {
+      // Chrome stops continuous recognition after silence — restart it
       if (listeningRef.current) {
         setTimeout(() => {
           if (listeningRef.current && recogRef.current) {
@@ -352,7 +551,7 @@ export function AlwaysOn({
 
     recogRef.current = rec;
     try { rec.start(); } catch { /* ignore if already started */ }
-  }, [language, t, stopCurrentAudio, setPhaseSync]);
+  }, [language, t, stopCurrentAudio]);
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
@@ -364,7 +563,6 @@ export function AlwaysOn({
       await ctx.resume();
       ctxRef.current = ctx;
 
-      // Keep AudioContext alive — browsers suspend it after ~30s of silence
       keepAliveRef.current = setInterval(async () => {
         if (ctxRef.current?.state === "suspended") {
           await ctxRef.current.resume().catch(() => undefined);
@@ -382,9 +580,7 @@ export function AlwaysOn({
       void poll();
       pollRef.current = setInterval(poll, POLL_MS);
     } catch {
-      setError(
-        t("Erreur au démarrage. Rechargez la page.", "Startup error. Please reload.")
-      );
+      setError(t("Erreur au démarrage. Rechargez la page.", "Startup error. Please reload."));
     }
   }, [startRecognition, poll, t, setPhaseSync]);
 
@@ -407,6 +603,7 @@ export function AlwaysOn({
       clearInterval(keepAliveRef.current!);
       clearTimeout(activatedTimerRef.current!);
       try { recogRef.current?.stop(); } catch { /* ignore */ }
+      closeRealtimeSessionRef.current();
       stopCurrentAudio();
       wakeRef.current?.release?.().catch(() => undefined);
       ctxRef.current?.close().catch(() => undefined);
@@ -446,47 +643,54 @@ export function AlwaysOn({
         <p className="text-white/70 text-lg max-w-xs leading-relaxed">
           {t(
             "Dites « Daniel » à tout moment pour me parler.",
-            "Say \"Daniel\" at any time to talk to me."
+            'Say "Daniel" at any time to talk to me.'
           )}
         </p>
         {error && (
-          <p className="mt-2 bg-red-500/80 text-white rounded-xl px-4 py-2 text-base">
-            {error}
-          </p>
+          <p className="mt-2 bg-red-500/80 text-white rounded-xl px-4 py-2 text-base">{error}</p>
         )}
       </button>
     );
   }
 
   const statusText =
-    phase === "activated"
+    phase === "session"
+      ? wakeLabel || t("Conversation en cours…", "Conversation in progress…")
+      : phase === "activated"
       ? wakeLabel || t("Oui ? Je vous écoute…", "Yes? I'm listening…")
       : phase === "thinking"
       ? t("Un instant…", "One moment…")
       : phase === "speaking"
-      ? t("Je vous réponds… (dites « Daniel » pour interrompre)", 'Replying… (say "Daniel" to interrupt)')
+      ? t("Je vous réponds…", "Replying…")
       : phase === "announcing"
       ? t("Rappel médicaments 💊", "Medication reminder 💊")
       : t("En écoute — dites « Daniel »", 'Listening — say "Daniel"');
 
   const ringClass =
-    phase === "activated"
+    phase === "session"
+      ? "bg-purple-400 scale-110"
+      : phase === "activated"
       ? "bg-green-400 scale-110"
       : phase === "thinking"
       ? "bg-yellow-300"
       : phase === "speaking" || phase === "announcing"
       ? "bg-blue-400"
-      : "bg-white/20"; // passive: subtle dim ring
+      : "bg-white/20";
+
+  const pingColor =
+    phase === "session"
+      ? "bg-purple-400"
+      : phase === "activated"
+      ? "bg-green-400"
+      : "bg-blue-400";
 
   return (
     <div className="h-full flex flex-col items-center justify-center gap-5 px-6 text-center">
       <div className="text-6xl font-light tabular-nums opacity-80">{clock}</div>
 
       <div className="relative flex items-center justify-center h-32">
-        {(phase === "speaking" || phase === "announcing" || phase === "activated") && (
-          <div className={`absolute w-36 h-36 rounded-full animate-ping opacity-30 ${
-            phase === "activated" ? "bg-green-400" : "bg-blue-400"
-          }`} />
+        {(phase === "session" || phase === "speaking" || phase === "announcing" || phase === "activated") && (
+          <div className={`absolute w-36 h-36 rounded-full animate-ping opacity-30 ${pingColor}`} />
         )}
         <div className={`w-28 h-28 rounded-full transition-all duration-200 ${ringClass}`} />
       </div>
@@ -503,24 +707,30 @@ export function AlwaysOn({
           </div>
         )}
         {badge && (
-          <div className="bg-green-600/90 text-white rounded-xl px-4 py-2 font-medium">
-            {badge}
-          </div>
+          <div className="bg-green-600/90 text-white rounded-xl px-4 py-2 font-medium">{badge}</div>
         )}
         {error && (
           <p className="bg-red-500/80 text-white rounded-xl px-4 py-2 text-sm">{error}</p>
         )}
       </div>
 
-      {/* Test button — only visible in passive mode so it doesn't interfere */}
+      {/* Session: show "end conversation" button */}
+      {phase === "session" && (
+        <button
+          onClick={() => closeRealtimeSessionRef.current()}
+          className="mt-1 px-5 py-2 rounded-xl bg-purple-500/30 text-white border border-purple-400/40 text-sm"
+        >
+          {t("Terminer la conversation", "End conversation")}
+        </button>
+      )}
+
+      {/* Passive: show test reminder button */}
       {phase === "passive" && (
         <button
           onClick={async () => {
             try {
               const { reminderId } = await createTestReminder(residentId);
-              // Clear the "already announced" set so the poll picks it up immediately
               announcedRef.current.clear();
-              // Also directly trigger it without waiting for the next poll
               const due: DueReminder[] = [
                 { id: reminderId, medicationName: "test", scheduledAt: new Date().toISOString() },
               ];

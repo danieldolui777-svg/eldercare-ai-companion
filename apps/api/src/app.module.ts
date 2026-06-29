@@ -9,6 +9,7 @@ import { ReminderModule } from "./reminder/reminder.module";
 import { AlertModule } from "./alert/alert.module";
 import { SchedulerModule } from "./scheduler/scheduler.module";
 import { VoiceModule } from "./voice/voice.module";
+import { RealtimeModule } from "./realtime/realtime.module";
 
 @Module({
   imports: [
@@ -22,6 +23,7 @@ import { VoiceModule } from "./voice/voice.module";
     AlertModule,
     SchedulerModule,
     VoiceModule,
+    RealtimeModule,
   ],
 })
 export class AppModule {}
