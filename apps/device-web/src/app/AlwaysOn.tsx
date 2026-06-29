@@ -187,6 +187,8 @@ export function AlwaysOn({
   // ── Realtime session ──────────────────────────────────────────────────────────
 
   const closeRealtimeSessionRef = useRef<() => void>(() => {});
+  // Filled in after startRecognition is defined (avoids forward-reference issue)
+  const restartRecognitionRef = useRef<() => void>(() => {});
 
   const closeRealtimeSession = useCallback(() => {
     clearTimeout(sessionTimerRef.current!);
@@ -198,7 +200,12 @@ export function AlwaysOn({
     if (ws && ws.readyState <= WebSocket.OPEN) ws.close();
     wsRef.current = null;
     stopCurrentAudio();
-    if (phaseRef.current === "session") setPhaseSync("passive");
+    if (phaseRef.current === "session") {
+      setPhaseSync("passive");
+      // Restart Speech API — getUserMedia can kill it on mobile.
+      // Give the mic time to release before trying to restart.
+      setTimeout(() => restartRecognitionRef.current(), 600);
+    }
   }, [setPhaseSync, stopCurrentAudio]);
 
   useEffect(() => {
@@ -251,6 +258,10 @@ export function AlwaysOn({
       wsRef.current = ws;
 
       // ── Microphone + AudioWorklet setup ─────────────────────────────────────
+      // Stop Speech Recognition before getUserMedia — on mobile they compete
+      // for the microphone and getUserMedia can silently kill the Speech API.
+      try { recogRef.current?.stop(); } catch { /* ignore */ }
+
       let workletReady = false;
       (async () => {
         try {
@@ -282,8 +293,9 @@ export function AlwaysOn({
             ws.send(JSON.stringify({ type: "audio", data: btoa(binary) }));
           };
         } catch (err: any) {
-          setError(t("Micro inaccessible.", "Microphone unavailable."));
-          setTimeout(() => setError(""), 3_500);
+          const msg = (err as Error)?.message ?? "unknown";
+          setError(t(`Micro : ${msg}`, `Mic: ${msg}`));
+          setTimeout(() => setError(""), 5_000);
           closeRealtimeSessionRef.current();
         }
       })();
@@ -349,8 +361,8 @@ export function AlwaysOn({
 
       ws.onerror = () => {
         if (phaseRef.current === "session") {
-          setError(t("Connexion perdue.", "Connection lost."));
-          setTimeout(() => setError(""), 3_000);
+          setError(t("WS erreur — vérifiez connexion.", "WS error — check connection."));
+          setTimeout(() => setError(""), 5_000);
           closeRealtimeSessionRef.current();
         }
       };
@@ -552,6 +564,17 @@ export function AlwaysOn({
     recogRef.current = rec;
     try { rec.start(); } catch { /* ignore if already started */ }
   }, [language, t, stopCurrentAudio]);
+
+  // Wire restartRecognitionRef once startRecognition is available.
+  // Called from closeRealtimeSession to recover after getUserMedia mic conflict.
+  useEffect(() => {
+    restartRecognitionRef.current = () => {
+      if (!listeningRef.current) return;
+      try { recogRef.current?.abort(); } catch { /* ignore */ }
+      recogRef.current = null;
+      setTimeout(() => startRecognition(), 300);
+    };
+  }, [startRecognition]);
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
