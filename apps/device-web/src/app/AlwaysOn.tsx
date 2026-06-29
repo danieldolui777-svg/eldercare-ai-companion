@@ -291,7 +291,8 @@ export function AlwaysOn({
           if (speechSinceRef.current === null) {
             speechSinceRef.current = now;
           } else if (now - speechSinceRef.current >= SPEECH_DEBOUNCE) {
-            busyRef.current = true;
+            // Do NOT set busyRef=true here — silence detection runs inside the
+            // same !busyRef block and would be permanently blocked.
             startRecorderRef.current();
           }
         }
@@ -302,6 +303,7 @@ export function AlwaysOn({
             silenceSinceRef.current = now;
           } else if (now - silenceSinceRef.current >= SILENCE_DEBOUNCE) {
             silenceSinceRef.current = null;
+            busyRef.current = true; // block VAD until API response is back
             stopRecorderRef.current();
           }
         }
