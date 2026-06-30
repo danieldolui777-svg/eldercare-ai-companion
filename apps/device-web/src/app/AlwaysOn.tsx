@@ -16,13 +16,15 @@ type Phase =
   | "thinking"    // fallback text-mode: query sent, waiting for reply
   | "speaking"    // fallback text-mode: playing reply
   | "session"     // OpenAI Realtime API — streaming audio in & out
-  | "announcing"; // medication reminder — top priority, interrupts everything
+  | "announcing"  // medication reminder — top priority, interrupts everything
+  | "confirming"; // just announced a reminder, listening for the reply (no "daniel")
 
 const WAKE_WORD = "daniel";
 const ACTIVATED_TIMEOUT = 8_000;
 const ECHO_COOLDOWN = 500;
 const POLL_MS = 30_000;
 const SESSION_IDLE_MS = 30_000; // close Realtime session after 30s of quiet
+const CONFIRM_TIMEOUT = 12_000; // listen this long for a medication reply, then give up
 
 export function AlwaysOn({
   residentId,
@@ -83,6 +85,7 @@ export function AlwaysOn({
   const wakeRef = useRef<any>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const activatedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const historyRef = useRef<ChatTurn[]>([]);
   const announcedRef = useRef<Set<string>>(new Set());
 
@@ -459,19 +462,34 @@ export function AlwaysOn({
         setLastUser("");
         await playEncoded(ann.audioBase64);
         await new Promise((r) => setTimeout(r, ECHO_COOLDOWN));
-      } catch { /* transient — skip, poll again next round */ }
-      finally {
+
+        // Listen for the resident's reply WITHOUT requiring "daniel". Any speech
+        // now is treated as the medication answer and sent to /voice/chat, which
+        // records the confirmation (and creates an alert if not taken).
+        setPhaseSync("confirming");
+        setWakeLabel(
+          t("Avez-vous bien pris votre médicament ?", "Did you take your medication?"),
+        );
+        clearTimeout(confirmTimerRef.current!);
+        confirmTimerRef.current = setTimeout(() => {
+          if (phaseRef.current === "confirming") {
+            setPhaseSync("passive");
+            setWakeLabel("");
+          }
+        }, CONFIRM_TIMEOUT);
+      } catch {
+        // transient — skip, poll again next round
         setPhaseSync("passive");
       }
     },
-    [residentId, stopCurrentAudio, playJingle, playEncoded, setPhaseSync]
+    [residentId, stopCurrentAudio, playJingle, playEncoded, setPhaseSync, t]
   );
 
   const handleReminderRef = useRef(handleReminder);
   useEffect(() => { handleReminderRef.current = handleReminder; }, [handleReminder]);
 
   const poll = useCallback(async () => {
-    if (phaseRef.current === "announcing") return;
+    if (phaseRef.current === "announcing" || phaseRef.current === "confirming") return;
     try {
       const due = await getDueReminders(residentId);
       const next = due.find((r) => !announcedRef.current.has(r.id));
@@ -489,6 +507,19 @@ export function AlwaysOn({
       if (current === "announcing" || current === "thinking") return;
       // In session mode: Web Speech API output is ignored (server VAD handles turns)
       if (current === "session") return;
+
+      // Just announced a reminder — any speech is the medication reply.
+      // Send it to /voice/chat (records the confirmation, no "daniel" needed).
+      if (current === "confirming") {
+        clearTimeout(confirmTimerRef.current!);
+        if (text.trim().length > 1) {
+          void sendQueryFallbackRef.current(text.trim());
+        } else {
+          setPhaseSync("passive");
+          setWakeLabel("");
+        }
+        return;
+      }
 
       if (current === "speaking") {
         if (!lower.includes(WAKE_WORD)) return;
@@ -696,6 +727,7 @@ export function AlwaysOn({
       clearInterval(pollRef.current!);
       clearInterval(keepAliveRef.current!);
       clearTimeout(activatedTimerRef.current!);
+      clearTimeout(confirmTimerRef.current!);
       try { recogRef.current?.stop(); } catch { /* ignore */ }
       void picoHandleRef.current?.stop().catch(() => undefined);
       picoHandleRef.current = null;
@@ -760,12 +792,14 @@ export function AlwaysOn({
       ? t("Je vous réponds…", "Replying…")
       : phase === "announcing"
       ? t("Rappel médicaments 💊", "Medication reminder 💊")
+      : phase === "confirming"
+      ? wakeLabel || t("Je vous écoute — répondez", "Listening — please answer")
       : t("En écoute — dites « Daniel »", 'Listening — say "Daniel"');
 
   const ringClass =
     phase === "session"
       ? "bg-purple-400 scale-110"
-      : phase === "activated"
+      : phase === "activated" || phase === "confirming"
       ? "bg-green-400 scale-110"
       : phase === "thinking"
       ? "bg-yellow-300"
@@ -776,7 +810,7 @@ export function AlwaysOn({
   const pingColor =
     phase === "session"
       ? "bg-purple-400"
-      : phase === "activated"
+      : phase === "activated" || phase === "confirming"
       ? "bg-green-400"
       : "bg-blue-400";
 
@@ -822,7 +856,7 @@ export function AlwaysOn({
       <div className="text-6xl font-light tabular-nums opacity-80">{clock}</div>
 
       <div className="relative flex items-center justify-center h-32">
-        {(phase === "session" || phase === "speaking" || phase === "announcing" || phase === "activated") && (
+        {(phase === "session" || phase === "speaking" || phase === "announcing" || phase === "activated" || phase === "confirming") && (
           <div className={`absolute w-36 h-36 rounded-full animate-ping opacity-30 ${pingColor}`} />
         )}
         <div className={`w-28 h-28 rounded-full transition-all duration-200 ${ringClass}`} />
