@@ -6,7 +6,7 @@ import { AuditService } from "../audit/audit.service";
 import { buildCompanionSystemPrompt } from "@eldercare/ai-providers";
 
 const OPENAI_REALTIME_URL =
-  "wss://api.openai.com/v1/realtime?model=gpt-4o-mini-realtime-preview";
+  "wss://api.openai.com/v1/realtime?model=gpt-realtime-mini";
 
 /**
  * Proxies a browser WebSocket connection to the OpenAI Realtime API.
