@@ -101,17 +101,25 @@ export class RealtimeHandler {
           type: "session.update",
           session: {
             type: "realtime",
-            modalities: ["text", "audio"],
             instructions,
-            voice: "shimmer",
-            input_audio_format: "pcm16",
-            output_audio_format: "pcm16",
-            input_audio_transcription: { model: "whisper-1" },
-            turn_detection: {
-              type: "server_vad",
-              threshold: 0.5,
-              prefix_padding_ms: 300,
-              silence_duration_ms: 700,
+            // GA schema: modalities → output_modalities; all audio config nested
+            // under audio.input / audio.output (voice/format/transcription/VAD).
+            output_modalities: ["audio"],
+            audio: {
+              input: {
+                format: { type: "audio/pcm", rate: 24000 },
+                transcription: { model: "whisper-1" },
+                turn_detection: {
+                  type: "server_vad",
+                  threshold: 0.5,
+                  prefix_padding_ms: 300,
+                  silence_duration_ms: 700,
+                },
+              },
+              output: {
+                format: { type: "audio/pcm", rate: 24000 },
+                voice: "shimmer",
+              },
             },
           },
         }),
@@ -132,6 +140,8 @@ export class RealtimeHandler {
       }
 
       switch (event.type as string) {
+        // GA renamed audio events with an "output_" prefix; accept both.
+        case "response.output_audio.delta":
         case "response.audio.delta":
           // Streaming audio chunk → send straight to browser
           client.send(
@@ -139,6 +149,7 @@ export class RealtimeHandler {
           );
           break;
 
+        case "response.output_audio_transcript.done":
         case "response.audio_transcript.done":
           // Full text of what the AI said
           client.send(
