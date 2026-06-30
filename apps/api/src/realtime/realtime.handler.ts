@@ -33,6 +33,20 @@ export class RealtimeHandler {
     const residentId = url.searchParams.get("residentId") ?? "demo";
     const language = (url.searchParams.get("language") ?? "fr") as "fr" | "en";
 
+    // Tunable from the device settings panel (query params), with safe defaults.
+    const ALLOWED_VOICES = [
+      "alloy", "ash", "ballad", "coral", "echo",
+      "sage", "shimmer", "verse", "marin", "cedar",
+    ];
+    const voiceParam = url.searchParams.get("voice") ?? "shimmer";
+    const voice = ALLOWED_VOICES.includes(voiceParam) ? voiceParam : "shimmer";
+    // How long the resident can pause before the AI considers the turn finished.
+    // Lower = snappier but cuts people off; higher = more patient.
+    const vadRaw = parseInt(url.searchParams.get("vad") ?? "700", 10);
+    const silenceMs = Number.isFinite(vadRaw)
+      ? Math.min(2000, Math.max(200, vadRaw))
+      : 700;
+
     // ── Resident context ───────────────────────────────────────────────────────
     let residentFirstName: string | undefined;
     let dueReminders: Array<{ medicationName: string; timeOfDay?: string }> = [];
@@ -108,17 +122,19 @@ export class RealtimeHandler {
             audio: {
               input: {
                 format: { type: "audio/pcm", rate: 24000 },
-                transcription: { model: "whisper-1" },
+                // gpt-4o-mini-transcribe is newer and more accurate than whisper-1
+                // for the on-screen subtitle (the model still understands raw audio).
+                transcription: { model: "gpt-4o-mini-transcribe" },
                 turn_detection: {
                   type: "server_vad",
                   threshold: 0.5,
                   prefix_padding_ms: 300,
-                  silence_duration_ms: 700,
+                  silence_duration_ms: silenceMs,
                 },
               },
               output: {
                 format: { type: "audio/pcm", rate: 24000 },
-                voice: "shimmer",
+                voice,
               },
             },
           },
@@ -250,7 +266,7 @@ export class RealtimeHandler {
         action: "voice.realtime_session",
         entityType: "Resident",
         entityId: residentId,
-        metadata: { language, remindersDue: dueReminders.length },
+        metadata: { language, remindersDue: dueReminders.length, voice, silenceMs },
       })
       .catch(() => undefined);
   }

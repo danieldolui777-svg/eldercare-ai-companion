@@ -42,6 +42,23 @@ export function AlwaysOn({
   const [error, setError] = useState("");
   const [browserOk, setBrowserOk] = useState(true);
 
+  // ── Tunable settings (testing panel) ───────────────────────────────────────────
+  const [showSettings, setShowSettings] = useState(false);
+  const [voice, setVoice] = useState("shimmer");
+  const [vadMs, setVadMs] = useState(700);
+  const [wakeEngine, setWakeEngine] = useState<"web" | "picovoice">("web");
+  // Mirrored in refs so the WebSocket-building callback reads the latest value
+  const voiceRef = useRef(voice);
+  const vadRef = useRef(vadMs);
+  const wakeEngineRef = useRef(wakeEngine);
+  useEffect(() => { voiceRef.current = voice; }, [voice]);
+  useEffect(() => { vadRef.current = vadMs; }, [vadMs]);
+  useEffect(() => { wakeEngineRef.current = wakeEngine; }, [wakeEngine]);
+
+  // Picovoice on-device wake-word handle (only when that engine is selected)
+  const picoHandleRef = useRef<{ stop: () => Promise<void> } | null>(null);
+  const workletLoadedRef = useRef(false);
+
   // ── Audio ─────────────────────────────────────────────────────────────────────
   const ctxRef = useRef<AudioContext | null>(null);
   // For the text-mode (fallback) single audio source:
@@ -244,7 +261,9 @@ export function AlwaysOn({
         .replace(/\/api\/v1\/?$/, "")
         .replace(/^https/, "wss")
         .replace(/^http(?!s)/, "ws");
-      const wsUrl = `${wsBase}/voice/realtime?residentId=${encodeURIComponent(residentId)}&language=${language}`;
+      const wsUrl =
+        `${wsBase}/voice/realtime?residentId=${encodeURIComponent(residentId)}` +
+        `&language=${language}&voice=${voiceRef.current}&vad=${vadRef.current}`;
 
       let ws: WebSocket;
       try {
@@ -258,9 +277,11 @@ export function AlwaysOn({
       wsRef.current = ws;
 
       // ── Microphone + AudioWorklet setup ─────────────────────────────────────
-      // Stop Speech Recognition before getUserMedia — on mobile they compete
-      // for the microphone and getUserMedia can silently kill the Speech API.
+      // Stop wake-word listening before getUserMedia — on mobile they compete
+      // for the microphone and getUserMedia can silently kill the listener.
       try { recogRef.current?.stop(); } catch { /* ignore */ }
+      await picoHandleRef.current?.stop().catch(() => undefined);
+      picoHandleRef.current = null;
 
       let workletReady = false;
       (async () => {
@@ -273,7 +294,11 @@ export function AlwaysOn({
             },
           });
           micStreamRef.current = stream;
-          await ctx.audioWorklet.addModule("/worklets/pcm-processor.js");
+          // Worklet module is loaded once at start(); only fetch here as a fallback.
+          if (!workletLoadedRef.current) {
+            await ctx.audioWorklet.addModule("/worklets/pcm-processor.js");
+            workletLoadedRef.current = true;
+          }
           const source = ctx.createMediaStreamSource(stream);
           const node = new AudioWorkletNode(ctx, "pcm-processor");
           workletNodeRef.current = node;
@@ -565,16 +590,55 @@ export function AlwaysOn({
     try { rec.start(); } catch { /* ignore if already started */ }
   }, [language, t, stopCurrentAudio]);
 
-  // Wire restartRecognitionRef once startRecognition is available.
+  /**
+   * Starts wake-word listening using the engine chosen in settings.
+   * - "web": browser Web Speech API (Google) — default, captures text after "daniel".
+   * - "picovoice": on-device Porcupine — instant, but only detects the keyword.
+   * Falls back to Web Speech if Picovoice can't start.
+   */
+  const startWakeDetection = useCallback(async () => {
+    if (wakeEngineRef.current === "picovoice") {
+      try {
+        const { startPicovoice, PICOVOICE_ACCESS_KEY } = await import("@/lib/picovoice");
+        if (!PICOVOICE_ACCESS_KEY) throw new Error("clé manquante");
+        picoHandleRef.current = await startPicovoice({
+          accessKey: PICOVOICE_ACCESS_KEY,
+          builtinKeyword: "Computer", // test keyword until a "Daniel" model is trained
+          onWake: () => {
+            const p = phaseRef.current;
+            if (p === "passive" || p === "speaking") {
+              if (p === "speaking") stopCurrentAudio();
+              void openRealtimeSession();
+            }
+          },
+        });
+        return;
+      } catch (e: any) {
+        setError(
+          t(
+            `Local indispo (${(e as Error)?.message ?? "?"}) — Google utilisé`,
+            `Local unavailable (${(e as Error)?.message ?? "?"}) — using Google`,
+          ),
+        );
+        setTimeout(() => setError(""), 5_000);
+        // fall through to Web Speech
+      }
+    }
+    startRecognition();
+  }, [startRecognition, openRealtimeSession, stopCurrentAudio, t]);
+
+  // Wire restartRecognitionRef once the engine starters are available.
   // Called from closeRealtimeSession to recover after getUserMedia mic conflict.
   useEffect(() => {
     restartRecognitionRef.current = () => {
       if (!listeningRef.current) return;
       try { recogRef.current?.abort(); } catch { /* ignore */ }
       recogRef.current = null;
-      setTimeout(() => startRecognition(), 300);
+      void picoHandleRef.current?.stop().catch(() => undefined);
+      picoHandleRef.current = null;
+      setTimeout(() => { void startWakeDetection(); }, 300);
     };
-  }, [startRecognition]);
+  }, [startWakeDetection]);
 
   // ── Lifecycle ─────────────────────────────────────────────────────────────────
 
@@ -585,6 +649,13 @@ export function AlwaysOn({
       const ctx = new Ctx();
       await ctx.resume();
       ctxRef.current = ctx;
+
+      // Pre-compile the PCM worklet once, up front, so the first session after
+      // "daniel" opens faster (no fetch+compile on the critical path).
+      ctx.audioWorklet
+        .addModule("/worklets/pcm-processor.js")
+        .then(() => { workletLoadedRef.current = true; })
+        .catch(() => undefined);
 
       keepAliveRef.current = setInterval(async () => {
         if (ctxRef.current?.state === "suspended") {
@@ -597,7 +668,7 @@ export function AlwaysOn({
       } catch { /* unsupported */ }
 
       listeningRef.current = true;
-      startRecognition();
+      void startWakeDetection();
       setPhaseSync("passive");
 
       void poll();
@@ -605,7 +676,7 @@ export function AlwaysOn({
     } catch {
       setError(t("Erreur au démarrage. Rechargez la page.", "Startup error. Please reload."));
     }
-  }, [startRecognition, poll, t, setPhaseSync]);
+  }, [startWakeDetection, poll, t, setPhaseSync]);
 
   useEffect(() => {
     const onVisible = async () => {
@@ -626,6 +697,8 @@ export function AlwaysOn({
       clearInterval(keepAliveRef.current!);
       clearTimeout(activatedTimerRef.current!);
       try { recogRef.current?.stop(); } catch { /* ignore */ }
+      void picoHandleRef.current?.stop().catch(() => undefined);
+      picoHandleRef.current = null;
       closeRealtimeSessionRef.current();
       stopCurrentAudio();
       wakeRef.current?.release?.().catch(() => undefined);
@@ -707,8 +780,45 @@ export function AlwaysOn({
       ? "bg-green-400"
       : "bg-blue-400";
 
+  // Switch wake-word engine live. Voice/VAD changes apply on the next session
+  // (they're read when the WebSocket URL is built), so only the engine needs a
+  // restart of the passive listener.
+  const changeWakeEngine = (eng: "web" | "picovoice") => {
+    setWakeEngine(eng);
+    wakeEngineRef.current = eng;
+    if (phaseRef.current === "passive") {
+      try { recogRef.current?.abort(); } catch { /* ignore */ }
+      recogRef.current = null;
+      void picoHandleRef.current?.stop().catch(() => undefined);
+      picoHandleRef.current = null;
+      setTimeout(() => { void startWakeDetection(); }, 300);
+    }
+  };
+
   return (
-    <div className="h-full flex flex-col items-center justify-center gap-5 px-6 text-center">
+    <div className="relative h-full flex flex-col items-center justify-center gap-5 px-6 text-center">
+      {/* Settings gear (testing panel) */}
+      <button
+        onClick={() => setShowSettings((s) => !s)}
+        className="absolute top-4 right-4 text-2xl opacity-60 active:opacity-100"
+        aria-label={t("Réglages", "Settings")}
+      >
+        ⚙️
+      </button>
+
+      {showSettings && (
+        <SettingsPanel
+          t={t}
+          voice={voice}
+          vadMs={vadMs}
+          wakeEngine={wakeEngine}
+          onVoice={setVoice}
+          onVad={setVadMs}
+          onWakeEngine={changeWakeEngine}
+          onClose={() => setShowSettings(false)}
+        />
+      )}
+
       <div className="text-6xl font-light tabular-nums opacity-80">{clock}</div>
 
       <div className="relative flex items-center justify-center h-32">
@@ -771,6 +881,143 @@ export function AlwaysOn({
 
       <button onClick={onExit} className="mt-2 text-white/55 underline text-base">
         {t("Quitter", "Exit")}
+      </button>
+    </div>
+  );
+}
+
+// ── Settings / testing panel ──────────────────────────────────────────────────
+
+const VOICE_OPTIONS = [
+  { id: "shimmer", label: "Shimmer (douce)" },
+  { id: "alloy", label: "Alloy (neutre)" },
+  { id: "sage", label: "Sage (posée)" },
+  { id: "coral", label: "Coral (chaleureuse)" },
+  { id: "verse", label: "Verse (expressive)" },
+  { id: "marin", label: "Marin (récente)" },
+  { id: "cedar", label: "Cedar (récente)" },
+];
+
+const VAD_OPTIONS = [
+  { ms: 400, label: "Réactif" },
+  { ms: 700, label: "Normal" },
+  { ms: 1100, label: "Patient" },
+];
+
+function SettingsPanel({
+  t,
+  voice,
+  vadMs,
+  wakeEngine,
+  onVoice,
+  onVad,
+  onWakeEngine,
+  onClose,
+}: {
+  t: (fr: string, en: string) => string;
+  voice: string;
+  vadMs: number;
+  wakeEngine: "web" | "picovoice";
+  onVoice: (v: string) => void;
+  onVad: (ms: number) => void;
+  onWakeEngine: (e: "web" | "picovoice") => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="absolute inset-0 z-20 bg-black/80 backdrop-blur-sm flex flex-col p-6 overflow-y-auto text-left">
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-white text-xl font-bold">{t("Réglages (test)", "Settings (test)")}</h2>
+        <button onClick={onClose} className="text-white/70 text-2xl">✕</button>
+      </div>
+
+      {/* Wake-word engine */}
+      <label className="text-white/80 text-sm font-medium mt-2">
+        {t("Détection du mot-réveil", "Wake-word detection")}
+      </label>
+      <div className="flex gap-2 mt-2">
+        <button
+          onClick={() => onWakeEngine("web")}
+          className={`flex-1 px-3 py-3 rounded-xl text-sm border ${
+            wakeEngine === "web"
+              ? "bg-blue-500 text-white border-blue-400"
+              : "bg-white/10 text-white/70 border-white/20"
+          }`}
+        >
+          {t("Google (« Daniel »)", 'Google ("Daniel")')}
+        </button>
+        <button
+          onClick={() => onWakeEngine("picovoice")}
+          className={`flex-1 px-3 py-3 rounded-xl text-sm border ${
+            wakeEngine === "picovoice"
+              ? "bg-blue-500 text-white border-blue-400"
+              : "bg-white/10 text-white/70 border-white/20"
+          }`}
+        >
+          {t("Local (« Computer »)", 'Local ("Computer")')}
+        </button>
+      </div>
+      {wakeEngine === "picovoice" && (
+        <p className="text-amber-300/90 text-xs mt-2 leading-relaxed">
+          {t(
+            "Mode local : nécessite une clé Picovoice + le fichier modèle. Mot de test « Computer » en attendant un modèle « Daniel ».",
+            'Local mode: needs a Picovoice key + model file. Test word "Computer" until a "Daniel" model is trained.',
+          )}
+        </p>
+      )}
+
+      {/* Voice */}
+      <label className="text-white/80 text-sm font-medium mt-5">
+        {t("Voix de l'IA", "AI voice")}
+      </label>
+      <div className="grid grid-cols-2 gap-2 mt-2">
+        {VOICE_OPTIONS.map((v) => (
+          <button
+            key={v.id}
+            onClick={() => onVoice(v.id)}
+            className={`px-3 py-2 rounded-xl text-sm border ${
+              voice === v.id
+                ? "bg-purple-500 text-white border-purple-400"
+                : "bg-white/10 text-white/70 border-white/20"
+            }`}
+          >
+            {v.label}
+          </button>
+        ))}
+      </div>
+
+      {/* VAD sensitivity */}
+      <label className="text-white/80 text-sm font-medium mt-5">
+        {t("Patience avant de répondre", "Patience before replying")}
+      </label>
+      <div className="flex gap-2 mt-2">
+        {VAD_OPTIONS.map((o) => (
+          <button
+            key={o.ms}
+            onClick={() => onVad(o.ms)}
+            className={`flex-1 px-3 py-3 rounded-xl text-sm border ${
+              vadMs === o.ms
+                ? "bg-green-500 text-white border-green-400"
+                : "bg-white/10 text-white/70 border-white/20"
+            }`}
+          >
+            {t(o.label, o.label)}
+            <span className="block text-xs opacity-70">{o.ms} ms</span>
+          </button>
+        ))}
+      </div>
+
+      <p className="text-white/50 text-xs mt-5 leading-relaxed">
+        {t(
+          "Voix et patience s'appliquent à la prochaine conversation.",
+          "Voice and patience apply to the next conversation.",
+        )}
+      </p>
+
+      <button
+        onClick={onClose}
+        className="mt-6 px-4 py-3 rounded-xl bg-white text-gray-900 font-medium"
+      >
+        {t("Fermer", "Close")}
       </button>
     </div>
   );
