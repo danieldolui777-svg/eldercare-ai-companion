@@ -100,6 +100,7 @@ export class RealtimeHandler {
         JSON.stringify({
           type: "session.update",
           session: {
+            type: "conversation",
             modalities: ["text", "audio"],
             instructions,
             voice: "shimmer",
