@@ -106,6 +106,16 @@ export async function createTestReminder(residentId: string): Promise<{ reminder
   return res.json() as Promise<{ reminderId: string }>;
 }
 
+/** Marks a reminder as missed (no response) — creates a high-severity alert. */
+export async function markReminderMissed(reminderId: string): Promise<void> {
+  const res = await fetch(`${BASE}/reminder-events/${reminderId}/confirm`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status: "missed", confirmationSource: "voice" }),
+  });
+  if (!res.ok) throw new Error(`API ${res.status}`);
+}
+
 export async function announce(
   residentId: string,
   reminderId: string,

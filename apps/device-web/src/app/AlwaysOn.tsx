@@ -4,6 +4,7 @@ import {
   chat as apiChat,
   announce,
   createTestReminder,
+  markReminderMissed,
   getDueReminders,
   type ChatTurn,
   type DueReminder,
@@ -88,6 +89,11 @@ export function AlwaysOn({
   const confirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const historyRef = useRef<ChatTurn[]>([]);
   const announcedRef = useRef<Set<string>>(new Set());
+  // Reminder awaiting its FIRST spoken answer — if none arrives, mark it missed.
+  const pendingReminderRef = useRef<string | null>(null);
+  // True while in a post-reminder conversation: keep listening after each reply
+  // (no "daniel" needed) so the resident can answer the AI's follow-up question.
+  const conversingRef = useRef(false);
 
   // Phase mirrored in a ref so async callbacks always see the latest value
   const phaseRef = useRef<Phase>("idle");
@@ -398,11 +404,41 @@ export function AlwaysOn({
     [residentId, language, t, setPhaseSync, playPCM16Chunk, stopCurrentAudio, resetSessionTimer]
   );
 
-  // ── Fallback text-mode API call (used if Realtime is unavailable) ─────────────
+  // ── Post-reminder auto-listen ─────────────────────────────────────────────────
+
+  /**
+   * Enter (or re-enter) the "confirming" listening window: listen for a spoken
+   * answer WITHOUT requiring "daniel". On timeout: if a medication reminder is
+   * still awaiting its first answer, mark it missed (no-response → high alert);
+   * otherwise just fall back to passive.
+   */
+  const armConfirmListen = useCallback(() => {
+    clearTimeout(confirmTimerRef.current!);
+    setPhaseSync("confirming");
+    setWakeLabel(t("Je vous écoute — répondez", "Listening — please answer"));
+    confirmTimerRef.current = setTimeout(async () => {
+      if (phaseRef.current !== "confirming") return;
+      const pid = pendingReminderRef.current;
+      if (pid) {
+        // No response to a medication reminder — escalate to the caregiver.
+        pendingReminderRef.current = null;
+        try {
+          await markReminderMissed(pid);
+          setBadge(t("Aucune réponse — soignant alerté", "No response — caregiver alerted"));
+        } catch { /* cron will still catch it later */ }
+      }
+      conversingRef.current = false;
+      setPhaseSync("passive");
+      setWakeLabel("");
+    }, CONFIRM_TIMEOUT);
+  }, [setPhaseSync, t]);
+
+  // ── Fallback text-mode API call (also used for the medication reply loop) ─────
 
   const sendQueryFallback = useCallback(
     async (query: string) => {
       clearTimeout(activatedTimerRef.current!);
+      clearTimeout(confirmTimerRef.current!);
       setPhaseSync("thinking");
       setWakeLabel("");
       setLastUser(query);
@@ -436,10 +472,16 @@ export function AlwaysOn({
         setError(t("Erreur réseau — réessayez.", "Network error — try again."));
         setTimeout(() => setError(""), 3_500);
       } finally {
-        setPhaseSync("passive");
+        // If we're mid-conversation (after a reminder), keep listening for the
+        // resident's follow-up without "daniel"; otherwise go back to passive.
+        if (conversingRef.current) {
+          armConfirmListen();
+        } else {
+          setPhaseSync("passive");
+        }
       }
     },
-    [residentId, language, playEncoded, t, setPhaseSync]
+    [residentId, language, playEncoded, t, setPhaseSync, armConfirmListen]
   );
 
   const sendQueryFallbackRef = useRef(sendQueryFallback);
@@ -454,6 +496,7 @@ export function AlwaysOn({
       stopCurrentAudio();
       clearTimeout(activatedTimerRef.current!);
       announcedRef.current.add(reminder.id);
+      historyRef.current = []; // fresh conversation context for this reminder
       setPhaseSync("announcing");
       try {
         await playJingle();
@@ -464,25 +507,23 @@ export function AlwaysOn({
         await new Promise((r) => setTimeout(r, ECHO_COOLDOWN));
 
         // Listen for the resident's reply WITHOUT requiring "daniel". Any speech
-        // now is treated as the medication answer and sent to /voice/chat, which
-        // records the confirmation (and creates an alert if not taken).
-        setPhaseSync("confirming");
+        // now is sent to /voice/chat, which records the confirmation (and creates
+        // an alert if not taken). If NO reply arrives, armConfirmListen marks the
+        // reminder missed (high alert). After a reply, the conversation continues.
+        pendingReminderRef.current = reminder.id;
+        conversingRef.current = true;
+        armConfirmListen();
         setWakeLabel(
           t("Avez-vous bien pris votre médicament ?", "Did you take your medication?"),
         );
-        clearTimeout(confirmTimerRef.current!);
-        confirmTimerRef.current = setTimeout(() => {
-          if (phaseRef.current === "confirming") {
-            setPhaseSync("passive");
-            setWakeLabel("");
-          }
-        }, CONFIRM_TIMEOUT);
       } catch {
         // transient — skip, poll again next round
+        pendingReminderRef.current = null;
+        conversingRef.current = false;
         setPhaseSync("passive");
       }
     },
-    [residentId, stopCurrentAudio, playJingle, playEncoded, setPhaseSync, t]
+    [residentId, stopCurrentAudio, playJingle, playEncoded, setPhaseSync, t, armConfirmListen]
   );
 
   const handleReminderRef = useRef(handleReminder);
@@ -508,13 +549,17 @@ export function AlwaysOn({
       // In session mode: Web Speech API output is ignored (server VAD handles turns)
       if (current === "session") return;
 
-      // Just announced a reminder — any speech is the medication reply.
-      // Send it to /voice/chat (records the confirmation, no "daniel" needed).
+      // Auto-listen after a reminder — any speech is the resident's reply.
+      // Send it to /voice/chat (records the confirmation on the first turn, then
+      // continues the conversation). The resident spoke, so it is NOT a "no
+      // response" case — clear the pending reminder so it won't be marked missed.
       if (current === "confirming") {
         clearTimeout(confirmTimerRef.current!);
+        pendingReminderRef.current = null;
         if (text.trim().length > 1) {
           void sendQueryFallbackRef.current(text.trim());
         } else {
+          conversingRef.current = false;
           setPhaseSync("passive");
           setWakeLabel("");
         }
