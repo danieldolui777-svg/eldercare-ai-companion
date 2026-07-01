@@ -369,11 +369,21 @@ export function AlwaysOn({
 
           case "transcript":
             setLastUser(msg.text as string);
+            // Accumulate the conversation so it survives an interruption (e.g. a
+            // medication reminder) and the follow-up chat still has the context.
+            historyRef.current = [
+              ...historyRef.current,
+              { role: "user", content: msg.text as string } as ChatTurn,
+            ].slice(-20);
             resetSessionTimer();
             break;
 
           case "reply":
             setLastReply(msg.text as string);
+            historyRef.current = [
+              ...historyRef.current,
+              { role: "assistant", content: msg.text as string } as ChatTurn,
+            ].slice(-20);
             break;
 
           case "response.done":
@@ -496,13 +506,19 @@ export function AlwaysOn({
       stopCurrentAudio();
       clearTimeout(activatedTimerRef.current!);
       announcedRef.current.add(reminder.id);
-      historyRef.current = []; // fresh conversation context for this reminder
       setPhaseSync("announcing");
       try {
         await playJingle();
         const ann = await announce(residentId, reminder.id);
         setLastReply(ann.text);
         setLastUser("");
+        // Keep the prior conversation and log the announcement as an assistant
+        // turn, so after confirming the medication the AI still remembers what
+        // was being discussed before the interruption.
+        historyRef.current = [
+          ...historyRef.current,
+          { role: "assistant", content: ann.text } as ChatTurn,
+        ].slice(-20);
         await playEncoded(ann.audioBase64);
         await new Promise((r) => setTimeout(r, ECHO_COOLDOWN));
 
