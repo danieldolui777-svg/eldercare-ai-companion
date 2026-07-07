@@ -51,6 +51,9 @@ export class RealtimeHandler {
 
     // ── Resident context ───────────────────────────────────────────────────────
     let residentFirstName: string | undefined;
+    let residentGender:
+      | "female" | "male" | "other" | "unspecified" | undefined;
+    let familyContact: { name?: string; relation?: string } | undefined;
     let dueReminders: Array<{ medicationName: string; timeOfDay?: string }> = [];
 
     if (residentId && residentId !== "demo") {
@@ -68,6 +71,13 @@ export class RealtimeHandler {
         if (consented && privacy.allowAiConversation !== false) {
           residentFirstName =
             resident.preferredName ?? resident.firstName ?? undefined;
+          residentGender = (resident.gender as any) ?? undefined;
+          if (resident.familyContactName || resident.familyContactRelation) {
+            familyContact = {
+              name: resident.familyContactName ?? undefined,
+              relation: resident.familyContactRelation ?? undefined,
+            };
+          }
           const pending = await this.prisma.reminderEvent.findMany({
             where: {
               residentId,
@@ -96,6 +106,8 @@ export class RealtimeHandler {
       residentFirstName,
       dueReminders,
       memoryFacts,
+      gender: residentGender,
+      familyContact,
     });
 
     // Accumulate the session's turns so we can distil memory when it ends.

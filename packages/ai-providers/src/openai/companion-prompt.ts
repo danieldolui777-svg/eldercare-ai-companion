@@ -24,6 +24,10 @@ export interface CompanionPromptOptions {
   /** Curated, NON-MEDICAL facts the companion remembers about this person
    *  (relatives' names, hobbies, past job…). Used to personalise the chat. */
   memoryFacts?: string[];
+  /** Gender — used for correct grammatical agreement (esp. in French) and tone. */
+  gender?: "female" | "male" | "other" | "unspecified";
+  /** A close family/referent contact the companion may warmly refer to. */
+  familyContact?: { name?: string; relation?: string };
 }
 
 export function buildCompanionSystemPrompt(
@@ -33,6 +37,27 @@ export function buildCompanionSystemPrompt(
   const name = options.residentFirstName?.trim();
   const reminders = options.dueReminders ?? [];
   const memoryFacts = (options.memoryFacts ?? []).filter((f) => f.trim());
+  const gender = options.gender;
+  const familyContactName = options.familyContact?.name?.trim();
+  const familyContactRelation = options.familyContact?.relation?.trim();
+
+  const personLines: string[] = [];
+  if (gender === "female" || gender === "male") {
+    const who = gender === "female" ? "a woman" : "a man";
+    personLines.push(
+      `This person is ${who}. When you address them, use correct grammatical`,
+      "agreement for their gender (this matters in French — e.g. adjectives).",
+    );
+  }
+  if (familyContactName) {
+    personLines.push(
+      familyContactRelation
+        ? `Their close family contact is ${familyContactName} (their ${familyContactRelation}).`
+        : `Their close family contact is ${familyContactName}.`,
+      "You may mention this person warmly if it comes up naturally; never share",
+      "any private or medical details about them.",
+    );
+  }
 
   const reminderLines =
     reminders.length > 0
@@ -68,6 +93,7 @@ export function buildCompanionSystemPrompt(
     name
       ? `The person you are speaking with is called ${name}.`
       : "You do not always know the person's name; that is fine.",
+    ...personLines,
     "",
     "Your role: keep them company, chat about everyday life (family, memories,",
     "weather, hobbies, the news in general terms), and gently remind them about",

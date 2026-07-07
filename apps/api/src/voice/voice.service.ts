@@ -230,6 +230,13 @@ export class VoiceService {
         residentFirstName: resident?.preferredName ?? resident?.firstName,
         dueReminders,
         memoryFacts,
+        gender: (resident?.gender as any) ?? undefined,
+        familyContact: resident
+          ? {
+              name: resident.familyContactName ?? undefined,
+              relation: resident.familyContactRelation ?? undefined,
+            }
+          : undefined,
       },
     );
 
