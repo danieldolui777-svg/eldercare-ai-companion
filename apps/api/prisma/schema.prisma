@@ -12,6 +12,9 @@ model Resident {
   firstName         String
   preferredName     String?
   dateOfBirth       DateTime
+  gender            Gender?
+  familyContactName     String?
+  familyContactRelation String?
   language          String   @default("fr")
   voicePreferences  Json     @default("{}")
   consentStatus     ConsentStatus
@@ -23,6 +26,40 @@ model Resident {
   medicationSchedules MedicationSchedule[]
   reminderEvents      ReminderEvent[]
   alerts              Alert[]
+  memories            ResidentMemory[]
+  conversationEntries ConversationEntry[]
+}
+
+// Curated companion memory — distilled, NON-MEDICAL facts the companion may use
+// to personalise conversation (e.g. "grandson is called Paul", "was a teacher").
+// Deliberately separate from medical/reminder data and audit logs (data
+// boundary). Never store diagnoses, medication, or treatment info here.
+model ResidentMemory {
+  id         String         @id @default(uuid())
+  residentId String
+  category   MemoryCategory @default(other)
+  content    String
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+
+  resident Resident @relation(fields: [residentId], references: [id])
+
+  @@index([residentId])
+}
+
+// Verbatim conversation log — OPTIONAL, only written when the resident has
+// consented (privacySettings.storeTranscripts). Kept separate from curated
+// memory so it can be disabled or purged independently.
+model ConversationEntry {
+  id         String   @id @default(uuid())
+  residentId String
+  role       String
+  content    String
+  createdAt  DateTime @default(now())
+
+  resident Resident @relation(fields: [residentId], references: [id])
+
+  @@index([residentId])
 }
 
 model Caregiver {
@@ -118,6 +155,23 @@ enum ConsentStatus {
   granted
   revoked
   guardian_granted
+}
+
+enum Gender {
+  female
+  male
+  other
+  unspecified
+}
+
+// Non-medical categories only — keeps the companion memory clear of the medical
+// data boundary. No "health"/"diagnosis" category by design.
+enum MemoryCategory {
+  family
+  preference
+  life_history
+  routine
+  other
 }
 
 enum CaregiverRole {

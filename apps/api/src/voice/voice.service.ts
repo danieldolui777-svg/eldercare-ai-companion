@@ -9,6 +9,7 @@ import {
 import { AuditService } from "../audit/audit.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { ReminderConfirmationService } from "../reminder/reminder-confirmation.service";
+import { MemoryService } from "../memory/memory.service";
 
 export interface ConverseInput {
   residentId: string;
@@ -86,6 +87,7 @@ export class VoiceService {
     private readonly audit: AuditService,
     private readonly prisma: PrismaService,
     private readonly confirmation: ReminderConfirmationService,
+    private readonly memory: MemoryService,
   ) {
     const apiKey = process.env.OPENAI_API_KEY ?? "";
     this.configured = apiKey.length > 0;
@@ -214,6 +216,9 @@ export class VoiceService {
 
     const transcript = input.text;
 
+    // Curated memory the companion remembers about this person (non-medical).
+    const memoryFacts = resident ? await this.memory.loadFacts(resident.id) : [];
+
     const messages: ChatMessage[] = [
       ...(input.history ?? []),
       { role: "user", content: transcript },
@@ -224,6 +229,7 @@ export class VoiceService {
         language,
         residentFirstName: resident?.preferredName ?? resident?.firstName,
         dueReminders,
+        memoryFacts,
       },
     );
 
@@ -245,6 +251,14 @@ export class VoiceService {
     }
 
     const speechOut = await this.speech.synthesize({ text: reply, language });
+
+    // Update long-term memory from this exchange (best-effort, consent-gated).
+    if (resident) {
+      void this.memory.recordConversation(resident.id, [
+        { role: "user", content: transcript },
+        { role: "assistant", content: reply },
+      ]);
+    }
 
     await this.audit.log({
       actorType: "ai",

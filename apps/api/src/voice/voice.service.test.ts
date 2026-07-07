@@ -32,12 +32,18 @@ function build(classification: any) {
   const audit = { log: vi.fn().mockResolvedValue(undefined) };
   const prisma = makePrisma();
   const confirmation = { confirm: vi.fn().mockResolvedValue({ id: "evt-1" }) };
+  // Memory is best-effort and consent-gated; stub it out for these tests.
+  const memory = {
+    loadFacts: vi.fn().mockResolvedValue([]),
+    recordConversation: vi.fn().mockResolvedValue(undefined),
+  };
 
   process.env.OPENAI_API_KEY = "test-key";
   const service = new VoiceService(
     audit as any,
     prisma as any,
     confirmation as any,
+    memory as any,
   );
   (service as any).speech = {
     transcribe: vi.fn().mockResolvedValue({ text: "..." }),

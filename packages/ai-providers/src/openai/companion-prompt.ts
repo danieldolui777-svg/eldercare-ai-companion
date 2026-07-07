@@ -21,6 +21,9 @@ export interface CompanionPromptOptions {
   /** Medication reminders currently due, if any — injected so the companion can
    *  gently remind. The backend remains the source of truth for medication. */
   dueReminders?: DueReminder[];
+  /** Curated, NON-MEDICAL facts the companion remembers about this person
+   *  (relatives' names, hobbies, past job…). Used to personalise the chat. */
+  memoryFacts?: string[];
 }
 
 export function buildCompanionSystemPrompt(
@@ -29,6 +32,7 @@ export function buildCompanionSystemPrompt(
   const language = options.language ?? "fr";
   const name = options.residentFirstName?.trim();
   const reminders = options.dueReminders ?? [];
+  const memoryFacts = (options.memoryFacts ?? []).filter((f) => f.trim());
 
   const reminderLines =
     reminders.length > 0
@@ -46,6 +50,16 @@ export function buildCompanionSystemPrompt(
           "give advice about it, the dose, or what it is for. If they say they have",
           "taken it, are unsure, or have not, simply acknowledge warmly; a caregiver",
           "is informed automatically.",
+        ]
+      : [];
+
+  const memoryLines =
+    memoryFacts.length > 0
+      ? [
+          "",
+          "WHAT YOU REMEMBER about this person (use naturally to show you know",
+          "them; never read it back as a list, and never treat it as medical):",
+          ...memoryFacts.map((f) => `- ${f}`),
         ]
       : [];
 
@@ -70,6 +84,7 @@ export function buildCompanionSystemPrompt(
     "  they feel in danger, calmly tell them you will let a caregiver know right",
     "  away and encourage them to call emergency services if it is urgent.",
     "- Do not give legal or financial advice.",
+    ...memoryLines,
     ...reminderLines,
     "",
     "Style:",

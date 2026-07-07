@@ -5,6 +5,9 @@ import type {
   CompanionReply,
   ClassifyMedicationInput,
   MedicationClassification,
+  ExtractMemoryInput,
+  MemoryFact,
+  MemoryCategory,
 } from "../index";
 import {
   buildCompanionSystemPrompt,
@@ -15,6 +18,14 @@ const VALID_STATUSES = new Set([
   "confirmed_taken",
   "confirmed_not_taken",
   "unknown",
+]);
+
+const VALID_MEMORY_CATEGORIES = new Set<MemoryCategory>([
+  "family",
+  "preference",
+  "life_history",
+  "routine",
+  "other",
 ]);
 
 export interface OpenAiChatOptions {
@@ -118,5 +129,89 @@ export class OpenAiCompanionChatProvider implements CompanionChatProvider {
       reminderId,
       status: status as MedicationClassification["status"],
     };
+  }
+
+  /**
+   * Distil lasting, NON-MEDICAL facts about the person from a conversation, so
+   * the companion can remember them next time (names of relatives, hobbies, past
+   * job, routines, preferences). Returns only NEW facts not already known.
+   *
+   * Safety: the prompt forbids storing medical, diagnostic, medication, or
+   * sensitive health information — that lives behind the deterministic backend,
+   * never in free-form companion memory.
+   */
+  async extractMemoryFacts(input: ExtractMemoryInput): Promise<MemoryFact[]> {
+    if (input.exchanges.length === 0) return [];
+
+    const convo = input.exchanges
+      .map((e) => `${e.role === "user" ? "Person" : "Companion"}: ${e.content}`)
+      .join("\n");
+    const known =
+      (input.existingFacts ?? []).length > 0
+        ? `Already known (do NOT repeat these):\n${(input.existingFacts ?? [])
+            .map((f) => `- ${f}`)
+            .join("\n")}`
+        : "Nothing is known yet.";
+
+    let completion;
+    try {
+      completion = await this.client.chat.completions.create({
+        model: this.model,
+        temperature: 0,
+        max_tokens: 300,
+        response_format: { type: "json_object" },
+        messages: [
+          {
+            role: "system",
+            content: [
+              "You maintain a warm companion's long-term memory of an elderly",
+              "person. From the conversation, extract only NEW, lasting, useful",
+              "facts about the person that would help a companion remember them.",
+              "",
+              "Categories: family, preference, life_history, routine, other.",
+              "",
+              "STRICT RULES:",
+              "- NEVER store medical, diagnostic, medication, dosage, symptom, or",
+              "  sensitive health information. Skip anything health-related.",
+              "- Only durable facts (a relative's name, a hobby, a former job, a",
+              "  daily habit). Ignore small talk, weather, one-off moods.",
+              "- Do not repeat facts already known.",
+              "- Keep each fact short, third-person, factual.",
+              "",
+              known,
+              "",
+              'Respond ONLY with JSON: {"facts": [{"category": <category>,',
+              '"content": <short fact>}]}. Empty list if nothing new/durable.',
+            ].join("\n"),
+          },
+          { role: "user", content: convo },
+        ],
+      });
+    } catch {
+      return [];
+    }
+
+    const raw = completion.choices[0]?.message?.content;
+    if (!raw) return [];
+
+    let parsed: { facts?: unknown };
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return [];
+    }
+    if (!Array.isArray(parsed.facts)) return [];
+
+    const out: MemoryFact[] = [];
+    for (const f of parsed.facts) {
+      const category = (f as any)?.category;
+      const content = (f as any)?.content;
+      if (typeof content !== "string" || content.trim().length === 0) continue;
+      const cat: MemoryCategory = VALID_MEMORY_CATEGORIES.has(category)
+        ? category
+        : "other";
+      out.push({ category: cat, content: content.trim().slice(0, 300) });
+    }
+    return out.slice(0, 10);
   }
 }

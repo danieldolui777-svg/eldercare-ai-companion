@@ -3,6 +3,7 @@ import { IncomingMessage } from "http";
 import WebSocket from "ws";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
+import { MemoryService } from "../memory/memory.service";
 import { buildCompanionSystemPrompt } from "@eldercare/ai-providers";
 
 const OPENAI_REALTIME_URL =
@@ -26,6 +27,7 @@ export class RealtimeHandler {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly memory: MemoryService,
   ) {}
 
   async handle(client: WebSocket, req: IncomingMessage): Promise<void> {
@@ -83,11 +85,29 @@ export class RealtimeHandler {
       }
     }
 
+    // Curated, non-medical facts the companion remembers about this person.
+    const memoryFacts =
+      residentId && residentId !== "demo"
+        ? await this.memory.loadFacts(residentId).catch(() => [])
+        : [];
+
     const instructions = buildCompanionSystemPrompt({
       language,
       residentFirstName,
       dueReminders,
+      memoryFacts,
     });
+
+    // Accumulate the session's turns so we can distil memory when it ends.
+    const sessionTurns: Array<{ role: "user" | "assistant"; content: string }> = [];
+    let memoryPersisted = false;
+    const persistMemory = () => {
+      if (memoryPersisted) return;
+      memoryPersisted = true;
+      if (sessionTurns.length > 0) {
+        void this.memory.recordConversation(residentId, sessionTurns.slice());
+      }
+    };
 
     // ── Connect to OpenAI Realtime ─────────────────────────────────────────────
     const openai = new WebSocket(OPENAI_REALTIME_URL, {
@@ -168,6 +188,9 @@ export class RealtimeHandler {
         case "response.output_audio_transcript.done":
         case "response.audio_transcript.done":
           // Full text of what the AI said
+          if (typeof event.transcript === "string") {
+            sessionTurns.push({ role: "assistant", content: event.transcript });
+          }
           client.send(
             JSON.stringify({ type: "reply", text: event.transcript as string }),
           );
@@ -175,6 +198,9 @@ export class RealtimeHandler {
 
         case "conversation.item.input_audio_transcription.completed":
           // What the resident said (Whisper transcript)
+          if (typeof event.transcript === "string") {
+            sessionTurns.push({ role: "user", content: event.transcript });
+          }
           client.send(
             JSON.stringify({
               type: "transcript",
@@ -214,6 +240,7 @@ export class RealtimeHandler {
     });
 
     openai.on("close", () => {
+      persistMemory();
       if (client.readyState === WebSocket.OPEN) client.close();
     });
 
@@ -251,6 +278,7 @@ export class RealtimeHandler {
     });
 
     client.on("close", () => {
+      persistMemory();
       if (
         openai.readyState !== WebSocket.CLOSED &&
         openai.readyState !== WebSocket.CLOSING

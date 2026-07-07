@@ -102,6 +102,8 @@ export interface CompanionChatProvider {
   reply(input: CompanionReplyInput): Promise<CompanionReply>;
 }
 
+// Note: extractMemoryFacts lives on the concrete provider; see OpenAiCompanionChatProvider.
+
 /** A due reminder reference passed to the classifier (curated, not the full record). */
 export interface MedicationReminderRef {
   id: string;
@@ -122,6 +124,36 @@ export interface ClassifyMedicationInput {
 export interface MedicationClassification {
   reminderId: string;
   status: MedicationConfirmStatus;
+}
+
+// --- Curated companion memory ------------------------------------------------
+// Distilled, NON-MEDICAL facts extracted from conversation so the companion can
+// remember the person across sessions. Medical/diagnostic content is excluded by
+// design (data boundary).
+
+export type MemoryCategory =
+  | "family"
+  | "preference"
+  | "life_history"
+  | "routine"
+  | "other";
+
+export interface MemoryFact {
+  category: MemoryCategory;
+  content: string;
+}
+
+export interface ConversationExchange {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface ExtractMemoryInput {
+  /** Conversation turns to distil lasting facts from. */
+  exchanges: ConversationExchange[];
+  /** Facts already stored, so the extractor does not repeat them. */
+  existingFacts?: string[];
+  language?: "fr" | "en";
 }
 
 // ---------------------------------------------------------------------------
