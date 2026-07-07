@@ -18,6 +18,16 @@ export const getResidents = () => req<any[]>("/residents");
 export const getResident = (id: string) => req<any>(`/residents/${id}`);
 export const createResident = (data: any) =>
   req<any>("/residents", { method: "POST", body: JSON.stringify(data) });
+export const updateResident = (id: string, data: any) =>
+  req<any>(`/residents/${id}`, { method: "PUT", body: JSON.stringify(data) });
+
+// ---- Companion memory ----
+export const getMemory = (residentId: string) =>
+  req<any[]>(`/residents/${residentId}/memory`);
+export const deleteMemory = (id: string) =>
+  fetch(`${BASE}/memory/${id}`, { method: "DELETE" }).then((r) => {
+    if (!r.ok) throw new Error(`API ${r.status}`);
+  });
 
 // ---- Caregivers ----
 export const getCaregivers = () => req<any[]>("/caregivers");

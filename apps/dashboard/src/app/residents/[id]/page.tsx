@@ -4,6 +4,7 @@ import { useParams } from "next/navigation";
 import {
   getResident, getMedications, getSchedules, getReminders, getAlertsForResident,
   createMedication, createSchedule, createReminderEvent, confirmReminder,
+  updateResident, getMemory, deleteMemory,
 } from "@/lib/api";
 import { Badge } from "@/components/Badge";
 import { Modal } from "@/components/Modal";
@@ -16,27 +17,31 @@ export default function ResidentPage() {
   const [schedules, setSchedules] = useState<any[]>([]);
   const [reminders, setReminders] = useState<any[]>([]);
   const [alerts, setAlerts] = useState<any[]>([]);
-  const [tab, setTab] = useState<"reminders" | "medications" | "alerts">("reminders");
+  const [memories, setMemories] = useState<any[]>([]);
+  const [tab, setTab] = useState<"reminders" | "medications" | "alerts" | "memory">("reminders");
 
   const [showMedForm, setShowMedForm] = useState(false);
   const [showSchedForm, setShowSchedForm] = useState(false);
   const [showConfirmForm, setShowConfirmForm] = useState<any>(null);
+  const [showProfileForm, setShowProfileForm] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
-    const [r, m, s, rem, al] = await Promise.all([
+    const [r, m, s, rem, al, mem] = await Promise.all([
       getResident(id),
       getMedications(id),
       getSchedules(id),
       getReminders(id),
       getAlertsForResident(id),
+      getMemory(id).catch(() => []),
     ]);
     setResident(r);
     setMeds(Array.isArray(m) ? m : []);
     setSchedules(Array.isArray(s) ? s : []);
     setReminders(Array.isArray(rem) ? rem : []);
     setAlerts(Array.isArray(al) ? al : []);
+    setMemories(Array.isArray(mem) ? mem : []);
   }, [id]);
 
   useEffect(() => { load(); }, [load]);
@@ -75,6 +80,46 @@ export default function ResidentPage() {
     } finally { setSaving(false); }
   }
 
+  // ---- Edit profile (gender, family contact, memory settings) ----
+  const [profileForm, setProfileForm] = useState<any>(null);
+  function openProfile() {
+    const p = resident.privacySettings ?? {};
+    setProfileForm({
+      gender: resident.gender ?? "",
+      familyContactName: resident.familyContactName ?? "",
+      familyContactRelation: resident.familyContactRelation ?? "",
+      storeMemory: p.storeMemory !== false,
+      storeTranscripts: p.storeTranscripts === true,
+    });
+    setError("");
+    setShowProfileForm(true);
+  }
+  async function submitProfile(e: React.FormEvent) {
+    e.preventDefault(); setSaving(true); setError("");
+    try {
+      await updateResident(id, {
+        gender: profileForm.gender || undefined,
+        familyContactName: profileForm.familyContactName || undefined,
+        familyContactRelation: profileForm.familyContactRelation || undefined,
+        privacySettings: {
+          ...(resident.privacySettings ?? {}),
+          storeMemory: profileForm.storeMemory,
+          storeTranscripts: profileForm.storeTranscripts,
+        },
+      });
+      setShowProfileForm(false);
+      await load();
+    } catch (err: any) { setError(err.message); }
+    finally { setSaving(false); }
+  }
+
+  // ---- Delete a remembered fact ----
+  async function removeMemory(memId: string) {
+    setSaving(true);
+    try { await deleteMemory(memId); await load(); }
+    finally { setSaving(false); }
+  }
+
   // ---- Confirm reminder ----
   const [confirmStatus, setConfirmStatus] = useState("confirmed_taken");
   async function submitConfirm(e: React.FormEvent) {
@@ -98,16 +143,32 @@ export default function ResidentPage() {
             <h1 className="text-2xl font-bold text-gray-900">{resident.firstName}</h1>
             {resident.preferredName && <p className="text-gray-500 text-sm">{resident.preferredName}</p>}
             <p className="text-xs text-gray-400 mt-1">
-              Né(e) le {new Date(resident.dateOfBirth).toLocaleDateString("fr-FR")} · Langue : {resident.language}
+              Né(e) le {new Date(resident.dateOfBirth).toLocaleDateString("fr-FR")}
+              {resident.gender && ` · ${GENDER_LABELS[resident.gender] ?? resident.gender}`}
+              {" · Langue : "}{resident.language}
             </p>
+            {(resident.familyContactName || resident.familyContactRelation) && (
+              <p className="text-xs text-gray-500 mt-1">
+                Contact famille : {resident.familyContactName}
+                {resident.familyContactRelation && ` (${resident.familyContactRelation})`}
+              </p>
+            )}
           </div>
-          <Badge value={resident.consentStatus} />
+          <div className="flex flex-col items-end gap-2">
+            <Badge value={resident.consentStatus} />
+            <button
+              onClick={openProfile}
+              className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50"
+            >
+              Éditer le profil
+            </button>
+          </div>
         </div>
       </div>
 
       {/* Tabs */}
       <div className="flex gap-1 mb-4 border-b border-gray-200">
-        {(["reminders", "medications", "alerts"] as const).map((t) => (
+        {(["reminders", "medications", "alerts", "memory"] as const).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -115,7 +176,7 @@ export default function ResidentPage() {
               tab === t ? "border-b-2 border-blue-600 text-blue-700" : "text-gray-500 hover:text-gray-800"
             }`}
           >
-            {t === "reminders" ? "Rappels" : t === "medications" ? "Medicaments" : "Alertes"}
+            {t === "reminders" ? "Rappels" : t === "medications" ? "Medicaments" : t === "alerts" ? "Alertes" : "Mémoire"}
             {t === "alerts" && alerts.filter((a) => a.status === "created" || a.status === "sent").length > 0 && (
               <span className="ml-1 bg-red-500 text-white text-xs rounded-full px-1.5 py-0.5">
                 {alerts.filter((a) => a.status === "created" || a.status === "sent").length}
@@ -235,6 +296,55 @@ export default function ResidentPage() {
         </div>
       )}
 
+      {/* Memory tab */}
+      {tab === "memory" && (
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-sm text-gray-500">
+              {memories.length} souvenir(s) — ce que le compagnon retient
+            </p>
+            <span className={`text-xs px-2 py-1 rounded-full ${
+              resident.privacySettings?.storeMemory === false
+                ? "bg-gray-100 text-gray-500"
+                : "bg-green-50 text-green-700"
+            }`}>
+              {resident.privacySettings?.storeMemory === false ? "Mémoire désactivée" : "Mémoire active"}
+            </span>
+          </div>
+          <p className="text-xs text-gray-400 mb-3">
+            Faits non-médicaux distillés des conversations. Supprimez tout élément inexact.
+          </p>
+          {memories.length === 0 ? (
+            <p className="text-sm text-gray-400">
+              Aucun souvenir pour l&apos;instant. Ils apparaissent après des conversations.
+            </p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {memories.map((mem) => (
+                <div key={mem.id} className="bg-white border border-gray-200 rounded-lg p-3 flex items-center justify-between shadow-sm">
+                  <div>
+                    <span className="text-xs bg-purple-50 text-purple-700 px-2 py-0.5 rounded mr-2">
+                      {MEMORY_CATEGORY_LABELS[mem.category] ?? mem.category}
+                    </span>
+                    <span className="text-sm text-gray-800">{mem.content}</span>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      {new Date(mem.createdAt).toLocaleDateString("fr-FR")}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => removeMemory(mem.id)}
+                    disabled={saving}
+                    className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 text-red-600 hover:bg-red-50 disabled:opacity-50"
+                  >
+                    Supprimer
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Modal: add medication */}
       {showMedForm && (
         <Modal title="Nouveau medicament" onClose={() => setShowMedForm(false)}>
@@ -297,6 +407,65 @@ export default function ResidentPage() {
           </form>
         </Modal>
       )}
+
+      {/* Modal: edit profile */}
+      {showProfileForm && profileForm && (
+        <Modal title="Profil du résident" onClose={() => setShowProfileForm(false)}>
+          <form onSubmit={submitProfile} className="flex flex-col gap-4">
+            <FormField label="Genre">
+              <select className={inputCls} value={profileForm.gender} onChange={(e) => setProfileForm((f: any) => ({ ...f, gender: e.target.value }))}>
+                <option value="">— Non précisé —</option>
+                <option value="female">Femme</option>
+                <option value="male">Homme</option>
+                <option value="other">Autre</option>
+                <option value="unspecified">Préfère ne pas dire</option>
+              </select>
+            </FormField>
+            <FormField label="Contact famille — nom">
+              <input className={inputCls} value={profileForm.familyContactName} onChange={(e) => setProfileForm((f: any) => ({ ...f, familyContactName: e.target.value }))} placeholder="ex: Paul Dupont" />
+            </FormField>
+            <FormField label="Contact famille — lien">
+              <input className={inputCls} value={profileForm.familyContactRelation} onChange={(e) => setProfileForm((f: any) => ({ ...f, familyContactRelation: e.target.value }))} placeholder="ex: fils, fille, voisin" />
+            </FormField>
+
+            <div className="border-t border-gray-200 pt-3 mt-1">
+              <p className="text-sm font-medium text-gray-700 mb-2">Mémoire & confidentialité</p>
+              <label className="flex items-center gap-2 text-sm text-gray-700 mb-2">
+                <input type="checkbox" checked={profileForm.storeMemory} onChange={(e) => setProfileForm((f: any) => ({ ...f, storeMemory: e.target.checked }))} />
+                Mémoire du compagnon (faits non-médicaux)
+              </label>
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input type="checkbox" checked={profileForm.storeTranscripts} onChange={(e) => setProfileForm((f: any) => ({ ...f, storeTranscripts: e.target.checked }))} />
+                Enregistrer les conversations mot-à-mot (verbatim)
+              </label>
+              <p className="text-xs text-gray-400 mt-1">
+                Le verbatim est sensible — à n&apos;activer qu&apos;avec le consentement du résident.
+              </p>
+            </div>
+
+            {error && <p className="text-sm text-red-600">{error}</p>}
+            <div className="flex gap-2 justify-end pt-2">
+              <button type="button" onClick={() => setShowProfileForm(false)} className="text-sm px-4 py-2 rounded-lg border hover:bg-gray-50">Annuler</button>
+              <button type="submit" disabled={saving} className="text-sm px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50">{saving ? "..." : "Enregistrer"}</button>
+            </div>
+          </form>
+        </Modal>
+      )}
     </div>
   );
 }
+
+const GENDER_LABELS: Record<string, string> = {
+  female: "Femme",
+  male: "Homme",
+  other: "Autre",
+  unspecified: "Non précisé",
+};
+
+const MEMORY_CATEGORY_LABELS: Record<string, string> = {
+  family: "Famille",
+  preference: "Goûts",
+  life_history: "Parcours",
+  routine: "Habitudes",
+  other: "Divers",
+};
