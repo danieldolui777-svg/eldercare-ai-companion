@@ -42,12 +42,24 @@ export class RealtimeHandler {
     ];
     const voiceParam = url.searchParams.get("voice") ?? "shimmer";
     const voice = ALLOWED_VOICES.includes(voiceParam) ? voiceParam : "shimmer";
-    // How long the resident can pause before the AI considers the turn finished.
-    // Lower = snappier but cuts people off; higher = more patient.
-    const vadRaw = parseInt(url.searchParams.get("vad") ?? "700", 10);
-    const silenceMs = Number.isFinite(vadRaw)
-      ? Math.min(2000, Math.max(200, vadRaw))
-      : 700;
+
+    // Input audio noise reduction — filters ambient noise BEFORE turn detection,
+    // so background chatter is far less likely to interrupt. "far_field" suits a
+    // tablet/phone sitting on a table in a room; "near_field" a close-held phone.
+    const NR_TYPES = ["near_field", "far_field"];
+    const nrParam = url.searchParams.get("nr") ?? "far_field";
+    const noiseReduction = NR_TYPES.includes(nrParam) ? nrParam : null; // null = off
+
+    // Semantic turn detection: decides the resident has finished by the MEANING of
+    // what they said, not just silence — much less likely to be cut off by a pause
+    // or someone talking nearby. "low" eagerness waits longest (best for elderly).
+    const EAGERNESS = ["low", "medium", "high", "auto"];
+    let eagerness = url.searchParams.get("eagerness") ?? "";
+    if (!EAGERNESS.includes(eagerness)) {
+      // Back-compat: map the old "vad" ms value onto an eagerness level.
+      const vadRaw = parseInt(url.searchParams.get("vad") ?? "1100", 10);
+      eagerness = vadRaw <= 500 ? "high" : vadRaw <= 900 ? "medium" : "low";
+    }
 
     // ── Resident context ───────────────────────────────────────────────────────
     let residentFirstName: string | undefined;
@@ -157,11 +169,12 @@ export class RealtimeHandler {
                 // gpt-4o-mini-transcribe is newer and more accurate than whisper-1
                 // for the on-screen subtitle (the model still understands raw audio).
                 transcription: { model: "gpt-4o-mini-transcribe" },
+                ...(noiseReduction
+                  ? { noise_reduction: { type: noiseReduction } }
+                  : {}),
                 turn_detection: {
-                  type: "server_vad",
-                  threshold: 0.5,
-                  prefix_padding_ms: 300,
-                  silence_duration_ms: silenceMs,
+                  type: "semantic_vad",
+                  eagerness,
                 },
               },
               output: {
@@ -306,7 +319,13 @@ export class RealtimeHandler {
         action: "voice.realtime_session",
         entityType: "Resident",
         entityId: residentId,
-        metadata: { language, remindersDue: dueReminders.length, voice, silenceMs },
+        metadata: {
+          language,
+          remindersDue: dueReminders.length,
+          voice,
+          eagerness,
+          noiseReduction: noiseReduction ?? "off",
+        },
       })
       .catch(() => undefined);
   }

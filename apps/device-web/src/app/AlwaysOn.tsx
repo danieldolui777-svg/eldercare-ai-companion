@@ -48,14 +48,20 @@ export function AlwaysOn({
   // ── Tunable settings (testing panel) ───────────────────────────────────────────
   const [showSettings, setShowSettings] = useState(false);
   const [voice, setVoice] = useState("shimmer");
-  const [vadMs, setVadMs] = useState(700);
+  // Semantic-VAD eagerness: how quickly the AI decides the patient finished.
+  // "low" = most patient (waits longest) — best default for elderly + noisy rooms.
+  const [eagerness, setEagerness] = useState<"low" | "medium" | "high">("low");
+  // Input noise reduction: "far_field" (room mic), "near_field" (close), "off".
+  const [noiseRed, setNoiseRed] = useState<"far_field" | "near_field" | "off">("far_field");
   const [wakeEngine, setWakeEngine] = useState<"web" | "picovoice">("web");
   // Mirrored in refs so the WebSocket-building callback reads the latest value
   const voiceRef = useRef(voice);
-  const vadRef = useRef(vadMs);
+  const eagernessRef = useRef(eagerness);
+  const noiseRedRef = useRef(noiseRed);
   const wakeEngineRef = useRef(wakeEngine);
   useEffect(() => { voiceRef.current = voice; }, [voice]);
-  useEffect(() => { vadRef.current = vadMs; }, [vadMs]);
+  useEffect(() => { eagernessRef.current = eagerness; }, [eagerness]);
+  useEffect(() => { noiseRedRef.current = noiseRed; }, [noiseRed]);
   useEffect(() => { wakeEngineRef.current = wakeEngine; }, [wakeEngine]);
 
   // Picovoice on-device wake-word handle (only when that engine is selected)
@@ -272,7 +278,8 @@ export function AlwaysOn({
         .replace(/^http(?!s)/, "ws");
       const wsUrl =
         `${wsBase}/voice/realtime?residentId=${encodeURIComponent(residentId)}` +
-        `&language=${language}&voice=${voiceRef.current}&vad=${vadRef.current}`;
+        `&language=${language}&voice=${voiceRef.current}` +
+        `&eagerness=${eagernessRef.current}&nr=${noiseRedRef.current}`;
 
       let ws: WebSocket;
       try {
@@ -905,10 +912,12 @@ export function AlwaysOn({
         <SettingsPanel
           t={t}
           voice={voice}
-          vadMs={vadMs}
+          eagerness={eagerness}
+          noiseRed={noiseRed}
           wakeEngine={wakeEngine}
           onVoice={setVoice}
-          onVad={setVadMs}
+          onEagerness={setEagerness}
+          onNoiseRed={setNoiseRed}
           onWakeEngine={changeWakeEngine}
           onClose={() => setShowSettings(false)}
         />
@@ -993,28 +1002,38 @@ const VOICE_OPTIONS = [
   { id: "cedar", label: "Cedar (récente)" },
 ];
 
-const VAD_OPTIONS = [
-  { ms: 400, label: "Réactif" },
-  { ms: 700, label: "Normal" },
-  { ms: 1100, label: "Patient" },
+const EAGERNESS_OPTIONS: { id: "high" | "medium" | "low"; label: string; hint: string }[] = [
+  { id: "high", label: "Réactif", hint: "répond vite" },
+  { id: "medium", label: "Normal", hint: "" },
+  { id: "low", label: "Patient", hint: "laisse finir" },
+];
+
+const NOISE_OPTIONS: { id: "far_field" | "near_field" | "off"; label: string }[] = [
+  { id: "far_field", label: "Pièce" },
+  { id: "near_field", label: "Proche" },
+  { id: "off", label: "Aucune" },
 ];
 
 function SettingsPanel({
   t,
   voice,
-  vadMs,
+  eagerness,
+  noiseRed,
   wakeEngine,
   onVoice,
-  onVad,
+  onEagerness,
+  onNoiseRed,
   onWakeEngine,
   onClose,
 }: {
   t: (fr: string, en: string) => string;
   voice: string;
-  vadMs: number;
+  eagerness: "low" | "medium" | "high";
+  noiseRed: "far_field" | "near_field" | "off";
   wakeEngine: "web" | "picovoice";
   onVoice: (v: string) => void;
-  onVad: (ms: number) => void;
+  onEagerness: (e: "low" | "medium" | "high") => void;
+  onNoiseRed: (n: "far_field" | "near_field" | "off") => void;
   onWakeEngine: (e: "web" | "picovoice") => void;
   onClose: () => void;
 }) {
@@ -1080,31 +1099,57 @@ function SettingsPanel({
         ))}
       </div>
 
-      {/* VAD sensitivity */}
+      {/* Patience (semantic-VAD eagerness) */}
       <label className="text-white/80 text-sm font-medium mt-5">
         {t("Patience avant de répondre", "Patience before replying")}
       </label>
       <div className="flex gap-2 mt-2">
-        {VAD_OPTIONS.map((o) => (
+        {EAGERNESS_OPTIONS.map((o) => (
           <button
-            key={o.ms}
-            onClick={() => onVad(o.ms)}
+            key={o.id}
+            onClick={() => onEagerness(o.id)}
             className={`flex-1 px-3 py-3 rounded-xl text-sm border ${
-              vadMs === o.ms
+              eagerness === o.id
                 ? "bg-green-500 text-white border-green-400"
                 : "bg-white/10 text-white/70 border-white/20"
             }`}
           >
             {t(o.label, o.label)}
-            <span className="block text-xs opacity-70">{o.ms} ms</span>
+            {o.hint && <span className="block text-xs opacity-70">{t(o.hint, o.hint)}</span>}
           </button>
         ))}
       </div>
 
-      <p className="text-white/50 text-xs mt-5 leading-relaxed">
+      {/* Noise reduction */}
+      <label className="text-white/80 text-sm font-medium mt-5">
+        {t("Réduction du bruit ambiant", "Ambient noise reduction")}
+      </label>
+      <div className="flex gap-2 mt-2">
+        {NOISE_OPTIONS.map((o) => (
+          <button
+            key={o.id}
+            onClick={() => onNoiseRed(o.id)}
+            className={`flex-1 px-3 py-3 rounded-xl text-sm border ${
+              noiseRed === o.id
+                ? "bg-blue-500 text-white border-blue-400"
+                : "bg-white/10 text-white/70 border-white/20"
+            }`}
+          >
+            {t(o.label, o.label)}
+          </button>
+        ))}
+      </div>
+      <p className="text-white/50 text-xs mt-2 leading-relaxed">
         {t(
-          "Voix et patience s'appliquent à la prochaine conversation.",
-          "Voice and patience apply to the next conversation.",
+          "« Pièce » filtre le bruit autour (tablette posée). « Proche » si le patient tient le téléphone.",
+          '"Room" filters surrounding noise (tablet on a table). "Close" if the patient holds the phone.',
+        )}
+      </p>
+
+      <p className="text-white/50 text-xs mt-4 leading-relaxed">
+        {t(
+          "Ces réglages s'appliquent à la prochaine conversation.",
+          "These settings apply to the next conversation.",
         )}
       </p>
 
