@@ -26,19 +26,43 @@ export default function CompanionDevicePage() {
   const [standby, setStandby] = useState(false);
   const [alwaysOn, setAlwaysOn] = useState(true);
 
-  // For the prototype, pick the first resident so the companion is "aware".
+  // Which resident is this device bound to? Priority:
+  //   1. ?resident=<id> in the URL (explicit binding for a kiosk device)
+  //   2. the last choice saved on this device (localStorage)
+  //   3. the first resident in the list
   // In a real deployment, one device is bound to one resident.
   useEffect(() => {
     getResidents()
       .then((list) => {
         setResidents(list);
-        if (list.length > 0) {
-          setResidentId(list[0].id);
-          setLanguage(list[0].language ?? "fr");
-        }
+        if (list.length === 0) return;
+        const params = new URLSearchParams(window.location.search);
+        const fromUrl = params.get("resident");
+        let stored: string | null = null;
+        try { stored = localStorage.getItem("residentId"); } catch { /* ignore */ }
+        const pick =
+          (fromUrl && list.find((r) => r.id === fromUrl)?.id) ||
+          (stored && list.find((r) => r.id === stored)?.id) ||
+          list[0].id;
+        setResidentId(pick);
+        try { localStorage.setItem("residentId", pick); } catch { /* ignore */ }
+        const chosen = list.find((r) => r.id === pick);
+        setLanguage((chosen?.language as "fr" | "en") ?? "fr");
       })
       .catch(() => undefined);
   }, []);
+
+  // Bind this device to a resident and remember the choice.
+  const chooseResident = useCallback((rid: string) => {
+    setResidentId(rid);
+    try { localStorage.setItem("residentId", rid); } catch { /* ignore */ }
+    historyRef.current = [];
+    setLastUser("");
+    setLastReply("");
+    setConfirmation(undefined);
+    const chosen = residents.find((r) => r.id === rid);
+    if (chosen?.language) setLanguage(chosen.language as "fr" | "en");
+  }, [residents]);
 
   const historyRef = useRef<ChatTurn[]>([]);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -141,6 +165,8 @@ export default function CompanionDevicePage() {
       <AlwaysOn
         residentId={residentId}
         language={language}
+        residents={residents}
+        onResidentChange={chooseResident}
         onExit={() => setAlwaysOn(false)}
       />
     );

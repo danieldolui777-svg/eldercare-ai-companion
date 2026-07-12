@@ -8,6 +8,7 @@ import {
   getDueReminders,
   type ChatTurn,
   type DueReminder,
+  type Resident,
 } from "@/lib/api";
 
 type Phase =
@@ -30,10 +31,14 @@ const CONFIRM_TIMEOUT = 12_000; // listen this long for a medication reply, then
 export function AlwaysOn({
   residentId,
   language,
+  residents = [],
+  onResidentChange,
   onExit,
 }: {
   residentId: string;
   language: "fr" | "en";
+  residents?: Resident[];
+  onResidentChange?: (id: string) => void;
   onExit: () => void;
 }) {
   const [phase, setPhase] = useState<Phase>("idle");
@@ -897,8 +902,18 @@ export function AlwaysOn({
     }
   };
 
+  const activeResident = residents.find((r) => r.id === residentId);
+  const residentName = activeResident?.preferredName ?? activeResident?.firstName;
+
   return (
     <div className="relative h-full flex flex-col items-center justify-center gap-5 px-6 text-center">
+      {/* Active resident name — confirms which person the device is bound to */}
+      {residentName && (
+        <div className="absolute top-4 left-4 text-white/60 text-sm font-medium">
+          👤 {residentName}
+        </div>
+      )}
+
       {/* Settings gear (testing panel) */}
       <button
         onClick={() => setShowSettings((s) => !s)}
@@ -915,6 +930,9 @@ export function AlwaysOn({
           eagerness={eagerness}
           noiseRed={noiseRed}
           wakeEngine={wakeEngine}
+          residents={residents}
+          residentId={residentId}
+          onResidentChange={onResidentChange}
           onVoice={setVoice}
           onEagerness={setEagerness}
           onNoiseRed={setNoiseRed}
@@ -1020,6 +1038,9 @@ function SettingsPanel({
   eagerness,
   noiseRed,
   wakeEngine,
+  residents,
+  residentId,
+  onResidentChange,
   onVoice,
   onEagerness,
   onNoiseRed,
@@ -1031,6 +1052,9 @@ function SettingsPanel({
   eagerness: "low" | "medium" | "high";
   noiseRed: "far_field" | "near_field" | "off";
   wakeEngine: "web" | "picovoice";
+  residents: Resident[];
+  residentId: string;
+  onResidentChange?: (id: string) => void;
   onVoice: (v: string) => void;
   onEagerness: (e: "low" | "medium" | "high") => void;
   onNoiseRed: (n: "far_field" | "near_field" | "off") => void;
@@ -1043,6 +1067,32 @@ function SettingsPanel({
         <h2 className="text-white text-xl font-bold">{t("Réglages (test)", "Settings (test)")}</h2>
         <button onClick={onClose} className="text-white/70 text-2xl">✕</button>
       </div>
+
+      {/* Active resident — bind this device to a person */}
+      {onResidentChange && residents.length > 0 && (
+        <>
+          <label className="text-white/80 text-sm font-medium">
+            {t("Personne suivie par cet appareil", "Person this device is bound to")}
+          </label>
+          <select
+            value={residentId}
+            onChange={(e) => onResidentChange(e.target.value)}
+            className="mt-2 mb-1 px-3 py-3 rounded-xl text-sm bg-white/10 text-white border border-white/20"
+          >
+            {residents.map((r) => (
+              <option key={r.id} value={r.id} className="text-gray-900">
+                {r.preferredName ?? r.firstName}
+              </option>
+            ))}
+          </select>
+          <p className="text-white/50 text-xs mb-2">
+            {t(
+              "Le choix est mémorisé sur cet appareil.",
+              "Your choice is remembered on this device.",
+            )}
+          </p>
+        </>
+      )}
 
       {/* Wake-word engine */}
       <label className="text-white/80 text-sm font-medium mt-2">
