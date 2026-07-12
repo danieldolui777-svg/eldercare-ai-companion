@@ -28,6 +28,8 @@ model Resident {
   alerts              Alert[]
   memories            ResidentMemory[]
   conversationEntries ConversationEntry[]
+  caregiverLinks      CaregiverResident[]
+  deviceTokens        DeviceToken[]
 }
 
 // Curated companion memory — distilled, NON-MEDICAL facts the companion may use
@@ -68,11 +70,42 @@ model Caregiver {
   role                    CaregiverRole
   phone                   String?
   email                   String           @unique
+  passwordHash            String?
   notificationPreferences Json
   createdAt               DateTime         @default(now())
   updatedAt               DateTime         @updatedAt
 
   assignedAlerts Alert[]
+  residentLinks  CaregiverResident[]
+}
+
+// Which residents a caregiver may access. Admins bypass this (see AuthZ).
+model CaregiverResident {
+  caregiverId String
+  residentId  String
+  createdAt   DateTime @default(now())
+
+  caregiver Caregiver @relation(fields: [caregiverId], references: [id], onDelete: Cascade)
+  resident  Resident  @relation(fields: [residentId], references: [id], onDelete: Cascade)
+
+  @@id([caregiverId, residentId])
+  @@index([residentId])
+}
+
+// A provisioned device bound to ONE resident. The raw token is shown once at
+// pairing; only its hash is stored. The device sends the token to authenticate.
+model DeviceToken {
+  id         String    @id @default(uuid())
+  residentId String
+  tokenHash  String    @unique
+  label      String?
+  createdAt  DateTime  @default(now())
+  lastSeenAt DateTime?
+  revokedAt  DateTime?
+
+  resident Resident @relation(fields: [residentId], references: [id], onDelete: Cascade)
+
+  @@index([residentId])
 }
 
 model Medication {
