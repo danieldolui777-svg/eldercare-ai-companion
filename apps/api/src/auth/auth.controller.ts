@@ -5,13 +5,11 @@ import {
   Body,
   HttpCode,
   HttpStatus,
-  UseGuards,
 } from "@nestjs/common";
 import { z } from "zod";
 import { AuthService } from "./auth.service";
 import { ZodPipe } from "../common/zod.pipe";
 import { Public } from "./public.decorator";
-import { JwtAuthGuard } from "./jwt-auth.guard";
 import { CurrentUser, type AuthUser } from "./current-user.decorator";
 
 const LoginSchema = z.object({
@@ -50,8 +48,7 @@ export class AuthController {
     );
   }
 
-  // Protected — returns the caller's identity (used to verify a token works).
-  @UseGuards(JwtAuthGuard)
+  // Protected by the global guard — returns the caller's identity.
   @Get("me")
   me(@CurrentUser() user: AuthUser) {
     return user;

@@ -30,9 +30,15 @@ export class RealtimeHandler {
     private readonly memory: MemoryService,
   ) {}
 
-  async handle(client: WebSocket, req: IncomingMessage): Promise<void> {
+  async handle(
+    client: WebSocket,
+    req: IncomingMessage,
+    authResidentId?: string,
+  ): Promise<void> {
     const url = new URL(req.url ?? "/", "http://localhost");
-    const residentId = url.searchParams.get("residentId") ?? "demo";
+    // Resident id is trusted from the authenticated device token, not the query.
+    const residentId =
+      authResidentId ?? url.searchParams.get("residentId") ?? "demo";
     const language = (url.searchParams.get("language") ?? "fr") as "fr" | "en";
 
     // Tunable from the device settings panel (query params), with safe defaults.

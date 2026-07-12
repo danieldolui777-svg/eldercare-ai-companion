@@ -12,12 +12,14 @@ import { VoiceModule } from "./voice/voice.module";
 import { RealtimeModule } from "./realtime/realtime.module";
 import { MemoryModule } from "./memory/memory.module";
 import { AuthModule } from "./auth/auth.module";
+import { DeviceModule } from "./device/device.module";
 
 @Module({
   imports: [
     ScheduleModule.forRoot(),
     PrismaModule,
     AuditModule,
+    DeviceModule,
     AuthModule,
     ResidentModule,
     CaregiverModule,

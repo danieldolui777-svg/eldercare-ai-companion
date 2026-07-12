@@ -15,6 +15,7 @@ import {
 import { WebSocketServer } from "ws";
 import { AppModule } from "./app.module";
 import { RealtimeHandler } from "./realtime/realtime.handler";
+import { DeviceService } from "./device/device.service";
 
 async function bootstrap() {
   const port = parseInt(process.env.PORT ?? "3000", 10);
@@ -38,8 +39,18 @@ async function bootstrap() {
   const httpServer = (fastify?.server ?? fastify) as import("http").Server;
   const wss = new WebSocketServer({ server: httpServer, path: "/voice/realtime" });
   const handler = app.get(RealtimeHandler);
-  wss.on("connection", (ws, req) => {
-    handler.handle(ws, req).catch((err: Error) => {
+  const devices = app.get(DeviceService);
+  wss.on("connection", async (ws, req) => {
+    // Authenticate the device: the resident id comes from the token, never the
+    // query — a paired device can only open a session for its own resident.
+    const url = new URL(req.url ?? "/", "http://localhost");
+    const token = url.searchParams.get("token") ?? undefined;
+    const residentId = await devices.resolveResidentId(token).catch(() => null);
+    if (!residentId) {
+      ws.close(4001, "Invalid device token");
+      return;
+    }
+    handler.handle(ws, req, residentId).catch((err: Error) => {
       console.error("RealtimeHandler error", err.message);
       ws.close();
     });
