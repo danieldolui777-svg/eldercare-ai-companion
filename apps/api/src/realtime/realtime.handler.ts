@@ -4,7 +4,12 @@ import WebSocket from "ws";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { MemoryService } from "../memory/memory.service";
-import { buildCompanionSystemPrompt, formatToday } from "@eldercare/ai-providers";
+import {
+  buildCompanionSystemPrompt,
+  formatToday,
+  createWebSearchProvider,
+  type WebSearchProvider,
+} from "@eldercare/ai-providers";
 
 const OPENAI_REALTIME_URL =
   "wss://api.openai.com/v1/realtime?model=gpt-realtime-mini";
@@ -23,12 +28,21 @@ const OPENAI_REALTIME_URL =
 export class RealtimeHandler {
   private readonly logger = new Logger(RealtimeHandler.name);
   private readonly apiKey = process.env.OPENAI_API_KEY ?? "";
+  private readonly webSearch?: WebSearchProvider;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly memory: MemoryService,
-  ) {}
+  ) {
+    this.webSearch = createWebSearchProvider({
+      provider: process.env.WEB_SEARCH_PROVIDER,
+      openaiApiKey: this.apiKey,
+      openaiModel: process.env.WEB_SEARCH_MODEL,
+      openaiToolType: process.env.OPENAI_WEB_SEARCH_TOOL,
+      tavilyApiKey: process.env.TAVILY_API_KEY,
+    });
+  }
 
   async handle(
     client: WebSocket,
@@ -170,6 +184,30 @@ export class RealtimeHandler {
             // GA schema: modalities → output_modalities; all audio config nested
             // under audio.input / audio.output (voice/format/transcription/VAD).
             output_modalities: ["audio"],
+            // Let the companion look things up mid-conversation (spoken web search).
+            ...(this.webSearch
+              ? {
+                  tools: [
+                    {
+                      type: "function",
+                      name: "search_web",
+                      description:
+                        "Search the web for CURRENT information (news, weather, " +
+                        "recent events, prices, today's facts). Use ONLY when the " +
+                        "person asks about something recent you cannot know. Never " +
+                        "for medical, legal, or financial advice.",
+                      parameters: {
+                        type: "object",
+                        properties: {
+                          query: { type: "string", description: "What to search for" },
+                        },
+                        required: ["query"],
+                      },
+                    },
+                  ],
+                  tool_choice: "auto",
+                }
+              : {}),
             audio: {
               input: {
                 format: { type: "audio/pcm", rate: 24000 },
@@ -198,7 +236,7 @@ export class RealtimeHandler {
     });
 
     // ── OpenAI → browser ───────────────────────────────────────────────────────
-    openai.on("message", (raw) => {
+    openai.on("message", async (raw) => {
       if (client.readyState !== WebSocket.OPEN) return;
       let event: Record<string, any>;
       try {
@@ -240,6 +278,37 @@ export class RealtimeHandler {
             }),
           );
           break;
+
+        case "response.function_call_arguments.done": {
+          // The companion asked to search the web. Run it, feed the result back,
+          // and let the model continue speaking with the fresh information.
+          if (event.name === "search_web" && this.webSearch) {
+            client.send(JSON.stringify({ type: "reply", text: "…" }));
+            let output = "La recherche web a échoué; réponds sans info récente.";
+            try {
+              const args = JSON.parse((event.arguments as string) || "{}");
+              const r = await this.webSearch.search(String(args.query ?? ""));
+              const src = r.sources.length
+                ? `\nSources: ${r.sources.map((s) => s.url).join(", ")}`
+                : "";
+              output = `${r.text}${src}`;
+            } catch (err) {
+              this.logger.warn(`realtime web search failed: ${(err as Error).message}`);
+            }
+            sendToOpenAI(
+              JSON.stringify({
+                type: "conversation.item.create",
+                item: {
+                  type: "function_call_output",
+                  call_id: event.call_id,
+                  output,
+                },
+              }),
+            );
+            sendToOpenAI(JSON.stringify({ type: "response.create" }));
+          }
+          break;
+        }
 
         case "response.done":
           client.send(JSON.stringify({ type: "response.done" }));
