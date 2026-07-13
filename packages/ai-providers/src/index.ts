@@ -174,3 +174,11 @@ export {
   type CompanionPromptOptions,
   type DueReminder,
 } from "./openai/companion-prompt";
+export {
+  TavilyWebSearch,
+  OpenAiWebSearch,
+  createWebSearchProvider,
+  type WebSearchProvider,
+  type WebSearchResult,
+  type WebSearchSource,
+} from "./openai/web-search";

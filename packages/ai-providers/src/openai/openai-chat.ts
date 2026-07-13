@@ -13,6 +13,7 @@ import {
   buildCompanionSystemPrompt,
   type CompanionPromptOptions,
 } from "./companion-prompt";
+import type { WebSearchProvider } from "./web-search";
 
 const VALID_STATUSES = new Set([
   "confirmed_taken",
@@ -32,16 +33,39 @@ export interface OpenAiChatOptions {
   apiKey: string;
   /** Chat model. Defaults to "gpt-4o-mini" for cost control. */
   model?: string;
+  /** Optional web-search backend. When set, the companion can look things up. */
+  webSearch?: WebSearchProvider;
 }
+
+const SEARCH_TOOL = {
+  type: "function" as const,
+  function: {
+    name: "search_web",
+    description:
+      "Search the web for CURRENT, up-to-date information: news, weather, " +
+      "recent events, sports results, prices, today's facts. Use ONLY when the " +
+      "person asks about something recent or that you cannot know from memory. " +
+      "Do NOT use it for medical, legal, or financial advice.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "What to search for" },
+      },
+      required: ["query"],
+    },
+  },
+};
 
 /** OpenAI implementation of the companion's conversational "brain". */
 export class OpenAiCompanionChatProvider implements CompanionChatProvider {
   private readonly client: OpenAI;
   private readonly model: string;
+  private readonly webSearch?: WebSearchProvider;
 
   constructor(options: OpenAiChatOptions) {
     this.client = new OpenAI({ apiKey: options.apiKey });
     this.model = options.model ?? "gpt-4o-mini";
+    this.webSearch = options.webSearch;
   }
 
   async reply(
@@ -49,21 +73,59 @@ export class OpenAiCompanionChatProvider implements CompanionChatProvider {
     promptOptions: CompanionPromptOptions = {},
   ): Promise<CompanionReply> {
     const systemPrompt = buildCompanionSystemPrompt(promptOptions);
+    const baseMessages: any[] = [
+      { role: "system", content: systemPrompt },
+      ...input.messages.map((m) => ({ role: m.role, content: m.content })),
+    ];
 
-    const completion = await this.client.chat.completions.create({
+    const first = await this.client.chat.completions.create({
       model: this.model,
       temperature: 0.7,
-      max_tokens: 200,
-      messages: [
-        { role: "system", content: systemPrompt },
-        ...input.messages.map((m) => ({ role: m.role, content: m.content })),
-      ],
+      max_tokens: 300,
+      messages: baseMessages,
+      ...(this.webSearch ? { tools: [SEARCH_TOOL] } : {}),
     });
 
-    const text =
-      completion.choices[0]?.message?.content?.trim() ??
-      "Pardon, je n'ai pas bien compris. Pouvez-vous répéter ?";
+    const msg = first.choices[0]?.message;
 
+    // If the companion asked to search the web, run it and let it answer again.
+    if (this.webSearch && msg?.tool_calls?.length) {
+      const toolMessages: any[] = [];
+      for (const tc of msg.tool_calls) {
+        if (tc.function?.name !== "search_web") continue;
+        let result = "";
+        try {
+          const args = JSON.parse(tc.function.arguments || "{}");
+          const r = await this.webSearch.search(String(args.query ?? ""));
+          const sources = r.sources.length
+            ? `\nSources: ${r.sources.map((s) => s.url).join(", ")}`
+            : "";
+          result = `${r.text}${sources}`;
+        } catch (err) {
+          result = "La recherche web a échoué; réponds sans info récente.";
+        }
+        toolMessages.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: result,
+        });
+      }
+
+      const second = await this.client.chat.completions.create({
+        model: this.model,
+        temperature: 0.7,
+        max_tokens: 300,
+        messages: [...baseMessages, msg as any, ...toolMessages],
+      });
+      const text =
+        second.choices[0]?.message?.content?.trim() ??
+        "Pardon, je n'ai pas bien compris. Pouvez-vous répéter ?";
+      return { text };
+    }
+
+    const text =
+      msg?.content?.trim() ??
+      "Pardon, je n'ai pas bien compris. Pouvez-vous répéter ?";
     return { text };
   }
 

@@ -2,6 +2,7 @@ import { Injectable, Logger, NotFoundException } from "@nestjs/common";
 import {
   OpenAiSpeechProvider,
   OpenAiCompanionChatProvider,
+  createWebSearchProvider,
   formatToday,
   type ChatMessage,
   type DueReminder,
@@ -98,7 +99,17 @@ export class VoiceService {
       );
     }
     this.speech = new OpenAiSpeechProvider({ apiKey });
-    this.chat = new OpenAiCompanionChatProvider({ apiKey });
+    // Web search lets the companion look up current info (news, weather…).
+    // Defaults to OpenAI's built-in search; set WEB_SEARCH_PROVIDER=tavily (+ key)
+    // for the provider-agnostic backend, or =none to disable.
+    const webSearch = createWebSearchProvider({
+      provider: process.env.WEB_SEARCH_PROVIDER,
+      openaiApiKey: apiKey,
+      openaiModel: process.env.WEB_SEARCH_MODEL,
+      openaiToolType: process.env.OPENAI_WEB_SEARCH_TOOL,
+      tavilyApiKey: process.env.TAVILY_API_KEY,
+    });
+    this.chat = new OpenAiCompanionChatProvider({ apiKey, webSearch });
   }
 
   async converse(input: ConverseInput): Promise<ConverseResult> {
