@@ -1,17 +1,47 @@
 const BASE =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1";
 
+// ── Device token (pairing) ─────────────────────────────────────────────────────
+// The device is bound to ONE resident via a token generated on the dashboard.
+const DEVICE_TOKEN_KEY = "deviceToken";
+export function getDeviceToken(): string | null {
+  try { return localStorage.getItem(DEVICE_TOKEN_KEY); } catch { return null; }
+}
+export function setDeviceToken(t: string) {
+  try { localStorage.setItem(DEVICE_TOKEN_KEY, t.trim()); } catch { /* ignore */ }
+}
+export function clearDeviceToken() {
+  try { localStorage.removeItem(DEVICE_TOKEN_KEY); } catch { /* ignore */ }
+}
+
+async function devReq<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = getDeviceToken();
+  const res = await fetch(`${BASE}${path}`, {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { "X-Device-Token": token } : {}),
+      ...(init?.headers ?? {}),
+    },
+  });
+  if (!res.ok) throw new Error(`API ${res.status}`);
+  const text = await res.text();
+  return (text ? JSON.parse(text) : undefined) as T;
+}
+
 export interface ChatTurn {
   role: "system" | "user" | "assistant";
   content: string;
 }
 
-export interface Resident {
+/** The resident this device is bound to. */
+export interface DeviceResident {
   id: string;
   firstName: string;
   preferredName?: string;
   language?: "fr" | "en";
 }
+export const getDeviceMe = () => devReq<DeviceResident>("/device/me");
 
 export interface ConverseResponse {
   transcript: string;
@@ -24,45 +54,25 @@ export interface ConverseResponse {
   };
 }
 
-export async function getResidents(): Promise<Resident[]> {
-  const res = await fetch(`${BASE}/residents`);
-  if (!res.ok) throw new Error(`API ${res.status}`);
-  return res.json() as Promise<Resident[]>;
-}
-
-/** Text-based turn — client already has the transcript (Web Speech API wake-word flow). */
-export async function chat(data: {
-  residentId: string;
+/** Text-based turn — resident is derived from the device token, not sent. */
+export const chat = (data: {
   text: string;
   language?: "fr" | "en";
   history?: ChatTurn[];
-}): Promise<ConverseResponse> {
-  const res = await fetch(`${BASE}/voice/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
-  });
-  if (!res.ok) throw new Error(`API ${res.status}`);
-  return res.json() as Promise<ConverseResponse>;
-}
+}) => devReq<ConverseResponse>("/voice/chat", {
+  method: "POST",
+  body: JSON.stringify(data),
+});
 
-export async function converse(data: {
-  residentId: string;
+export const converse = (data: {
   audioBase64: string;
   mimeType: string;
   language?: "fr" | "en";
   history?: ChatTurn[];
-}): Promise<ConverseResponse> {
-  const res = await fetch(`${BASE}/voice/converse`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(data),
-  });
-  if (!res.ok) {
-    throw new Error(`API ${res.status}`);
-  }
-  return res.json() as Promise<ConverseResponse>;
-}
+}) => devReq<ConverseResponse>("/voice/converse", {
+  method: "POST",
+  body: JSON.stringify(data),
+});
 
 export interface DueReminder {
   id: string;
@@ -70,16 +80,13 @@ export interface DueReminder {
   scheduledAt: string;
 }
 
-/** Reminders that are due now and not yet announced (status "scheduled"). */
-export async function getDueReminders(residentId: string): Promise<DueReminder[]> {
-  const res = await fetch(`${BASE}/residents/${residentId}/reminders`);
-  if (!res.ok) throw new Error(`API ${res.status}`);
-  const all = (await res.json()) as any[];
+/** Reminders due now for this device's resident. */
+export async function getDueReminders(): Promise<DueReminder[]> {
+  const all = await devReq<any[]>("/device/reminders");
   const now = Date.now();
   return all
     .filter(
-      (r) =>
-        r.status === "scheduled" && new Date(r.scheduledAt).getTime() <= now,
+      (r) => r.status === "scheduled" && new Date(r.scheduledAt).getTime() <= now,
     )
     .map((r) => ({
       id: r.id,
@@ -95,36 +102,21 @@ export interface AnnounceResponse {
   medicationName: string;
 }
 
-/** Creates an immediate test reminder (dev/demo use). */
-export async function createTestReminder(residentId: string): Promise<{ reminderId: string }> {
-  const res = await fetch(`${BASE}/voice/test-reminder`, {
+export const createTestReminder = () =>
+  devReq<{ reminderId: string }>("/voice/test-reminder", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ residentId }),
+    body: "{}",
   });
-  if (!res.ok) throw new Error(`API ${res.status}`);
-  return res.json() as Promise<{ reminderId: string }>;
-}
 
-/** Marks a reminder as missed (no response) — creates a high-severity alert. */
-export async function markReminderMissed(reminderId: string): Promise<void> {
-  const res = await fetch(`${BASE}/reminder-events/${reminderId}/confirm`, {
+/** Marks a reminder as missed (no response) for this device's resident. */
+export const markReminderMissed = (reminderId: string) =>
+  devReq<void>(`/device/reminders/${reminderId}/missed`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ status: "missed", confirmationSource: "voice" }),
+    body: "{}",
   });
-  if (!res.ok) throw new Error(`API ${res.status}`);
-}
 
-export async function announce(
-  residentId: string,
-  reminderId: string,
-): Promise<AnnounceResponse> {
-  const res = await fetch(`${BASE}/voice/announce`, {
+export const announce = (reminderId: string) =>
+  devReq<AnnounceResponse>("/voice/announce", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ residentId, reminderId }),
+    body: JSON.stringify({ reminderId }),
   });
-  if (!res.ok) throw new Error(`API ${res.status}`);
-  return res.json() as Promise<AnnounceResponse>;
-}

@@ -5,6 +5,7 @@ import {
   getResident, getMedications, getSchedules, getReminders, getAlertsForResident,
   createMedication, createSchedule, createReminderEvent, confirmReminder,
   updateResident, getMemory, deleteMemory,
+  createDeviceToken, getDevices, revokeDevice,
 } from "@/lib/api";
 import { Badge } from "@/components/Badge";
 import { Modal } from "@/components/Modal";
@@ -24,6 +25,9 @@ export default function ResidentPage() {
   const [showSchedForm, setShowSchedForm] = useState(false);
   const [showConfirmForm, setShowConfirmForm] = useState<any>(null);
   const [showProfileForm, setShowProfileForm] = useState(false);
+  const [showDevices, setShowDevices] = useState(false);
+  const [devices, setDevices] = useState<any[]>([]);
+  const [newToken, setNewToken] = useState<string>("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -120,6 +124,26 @@ export default function ResidentPage() {
     finally { setSaving(false); }
   }
 
+  // ---- Device pairing ----
+  async function openDevices() {
+    setError(""); setNewToken(""); setShowDevices(true);
+    try { setDevices(await getDevices(id)); } catch { setDevices([]); }
+  }
+  async function generateDevice() {
+    setSaving(true); setError("");
+    try {
+      const res = await createDeviceToken(id, "Appareil");
+      setNewToken(res.token);
+      setDevices(await getDevices(id));
+    } catch (err: any) { setError(err.message); }
+    finally { setSaving(false); }
+  }
+  async function killDevice(devId: string) {
+    setSaving(true);
+    try { await revokeDevice(devId); setDevices(await getDevices(id)); }
+    finally { setSaving(false); }
+  }
+
   // ---- Confirm reminder ----
   const [confirmStatus, setConfirmStatus] = useState("confirmed_taken");
   async function submitConfirm(e: React.FormEvent) {
@@ -156,12 +180,20 @@ export default function ResidentPage() {
           </div>
           <div className="flex flex-col items-end gap-2">
             <Badge value={resident.consentStatus} />
-            <button
-              onClick={openProfile}
-              className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50"
-            >
-              Éditer le profil
-            </button>
+            <div className="flex gap-2">
+              <button
+                onClick={openDevices}
+                className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50"
+              >
+                📱 Appareils
+              </button>
+              <button
+                onClick={openProfile}
+                className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50"
+              >
+                Éditer le profil
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -449,6 +481,72 @@ export default function ResidentPage() {
               <button type="submit" disabled={saving} className="text-sm px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50">{saving ? "..." : "Enregistrer"}</button>
             </div>
           </form>
+        </Modal>
+      )}
+      {/* Modal: device pairing */}
+      {showDevices && (
+        <Modal title="Appareils appairés" onClose={() => setShowDevices(false)}>
+          <div className="flex flex-col gap-4">
+            <p className="text-sm text-gray-600">
+              Un appareil (tablette/téléphone) est lié à <strong>{resident.firstName}</strong>.
+              Générez un code, puis collez-le dans l&apos;app sur l&apos;appareil du résident.
+            </p>
+
+            {newToken && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                <p className="text-xs text-amber-800 font-medium mb-1">
+                  Code d&apos;appairage (affiché une seule fois — copiez-le maintenant) :
+                </p>
+                <code className="block text-xs break-all bg-white border border-amber-200 rounded p-2 select-all">
+                  {newToken}
+                </code>
+                <button
+                  onClick={() => navigator.clipboard?.writeText(newToken).catch(() => {})}
+                  className="mt-2 text-xs px-3 py-1.5 rounded-lg bg-amber-600 text-white"
+                >
+                  Copier
+                </button>
+              </div>
+            )}
+
+            <button
+              onClick={generateDevice}
+              disabled={saving}
+              className="text-sm px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 self-start"
+            >
+              {saving ? "…" : "+ Générer un code d'appairage"}
+            </button>
+
+            <div className="flex flex-col gap-2">
+              {devices.length === 0 ? (
+                <p className="text-sm text-gray-400">Aucun appareil appairé.</p>
+              ) : (
+                devices.map((d) => (
+                  <div key={d.id} className="flex items-center justify-between border border-gray-200 rounded-lg p-2.5">
+                    <div>
+                      <p className="text-sm text-gray-800">
+                        {d.label ?? "Appareil"}
+                        {d.revokedAt && <span className="text-red-500 text-xs ml-2">(révoqué)</span>}
+                      </p>
+                      <p className="text-xs text-gray-400">
+                        {d.lastSeenAt ? `Vu le ${new Date(d.lastSeenAt).toLocaleString("fr-FR")}` : "Jamais utilisé"}
+                      </p>
+                    </div>
+                    {!d.revokedAt && (
+                      <button
+                        onClick={() => killDevice(d.id)}
+                        disabled={saving}
+                        className="text-xs px-3 py-1.5 rounded-lg border border-gray-300 text-red-600 hover:bg-red-50"
+                      >
+                        Révoquer
+                      </button>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+            {error && <p className="text-sm text-red-600">{error}</p>}
+          </div>
         </Modal>
       )}
     </div>

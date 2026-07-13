@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { logout } from "@/components/AuthGate";
 
 const links = [
   { href: "/", label: "Alertes" },
@@ -24,6 +25,12 @@ export function Nav() {
             {l.label}
           </Link>
         ))}
+        <button
+          onClick={() => logout()}
+          className="ml-auto text-sm font-medium px-3 py-1 rounded hover:bg-blue-600"
+        >
+          Déconnexion
+        </button>
       </div>
     </nav>
   );

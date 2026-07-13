@@ -2,9 +2,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   converse,
-  getResidents,
+  getDeviceMe,
+  getDeviceToken,
+  setDeviceToken,
+  clearDeviceToken,
   type ChatTurn,
-  type Resident,
+  type DeviceResident,
   type ConverseResponse,
 } from "@/lib/api";
 import { Standby } from "./Standby";
@@ -19,50 +22,28 @@ export default function CompanionDevicePage() {
   const [lastReply, setLastReply] = useState("");
   const [error, setError] = useState("");
   const [needsTapToHear, setNeedsTapToHear] = useState(false);
-  const [residents, setResidents] = useState<Resident[]>([]);
-  const [residentId, setResidentId] = useState("demo");
+  const [resident, setResident] = useState<DeviceResident | null>(null);
+  const [paired, setPaired] = useState<boolean | null>(null); // null = checking
   const [confirmation, setConfirmation] =
     useState<ConverseResponse["confirmation"]>(undefined);
   const [standby, setStandby] = useState(false);
   const [alwaysOn, setAlwaysOn] = useState(true);
 
-  // Which resident is this device bound to? Priority:
-  //   1. ?resident=<id> in the URL (explicit binding for a kiosk device)
-  //   2. the last choice saved on this device (localStorage)
-  //   3. the first resident in the list
-  // In a real deployment, one device is bound to one resident.
-  useEffect(() => {
-    getResidents()
-      .then((list) => {
-        setResidents(list);
-        if (list.length === 0) return;
-        const params = new URLSearchParams(window.location.search);
-        const fromUrl = params.get("resident");
-        let stored: string | null = null;
-        try { stored = localStorage.getItem("residentId"); } catch { /* ignore */ }
-        const pick =
-          (fromUrl && list.find((r) => r.id === fromUrl)?.id) ||
-          (stored && list.find((r) => r.id === stored)?.id) ||
-          list[0].id;
-        setResidentId(pick);
-        try { localStorage.setItem("residentId", pick); } catch { /* ignore */ }
-        const chosen = list.find((r) => r.id === pick);
-        setLanguage((chosen?.language as "fr" | "en") ?? "fr");
-      })
-      .catch(() => undefined);
+  // Resolve which resident this device is bound to, from its pairing token.
+  const loadDevice = useCallback(async () => {
+    if (!getDeviceToken()) { setPaired(false); return; }
+    try {
+      const me = await getDeviceMe();
+      setResident(me);
+      setLanguage((me.language as "fr" | "en") ?? "fr");
+      setPaired(true);
+    } catch {
+      clearDeviceToken();
+      setPaired(false);
+    }
   }, []);
 
-  // Bind this device to a resident and remember the choice.
-  const chooseResident = useCallback((rid: string) => {
-    setResidentId(rid);
-    try { localStorage.setItem("residentId", rid); } catch { /* ignore */ }
-    historyRef.current = [];
-    setLastUser("");
-    setLastReply("");
-    setConfirmation(undefined);
-    const chosen = residents.find((r) => r.id === rid);
-    if (chosen?.language) setLanguage(chosen.language as "fr" | "en");
-  }, [residents]);
+  useEffect(() => { loadDevice(); }, [loadDevice]);
 
   const historyRef = useRef<ChatTurn[]>([]);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -79,7 +60,6 @@ export default function CompanionDevicePage() {
     audio.onerror = () => setStatus("idle");
     setStatus("speaking");
     audio.play().catch(() => {
-      // iOS may block playback outside a direct tap — offer a manual button.
       setStatus("idle");
       setNeedsTapToHear(true);
     });
@@ -124,7 +104,6 @@ export default function CompanionDevicePage() {
       const audioBase64 = await blobToBase64(blob);
 
       const res = await converse({
-        residentId,
         audioBase64,
         mimeType: blob.type || "audio/webm",
         language,
@@ -160,13 +139,26 @@ export default function CompanionDevicePage() {
       ? t("Je vous réponds…", "Replying…")
       : t("Touchez pour parler", "Tap to talk");
 
+  // Still checking the pairing token.
+  if (paired === null) {
+    return (
+      <div className="h-full flex items-center justify-center text-white/60">
+        …
+      </div>
+    );
+  }
+
+  // Not paired yet — show the pairing screen.
+  if (!paired) {
+    return <PairingScreen onPaired={loadDevice} />;
+  }
+
   if (alwaysOn) {
     return (
       <AlwaysOn
-        residentId={residentId}
+        residentId={resident?.id ?? ""}
+        residentName={resident?.preferredName ?? resident?.firstName}
         language={language}
-        residents={residents}
-        onResidentChange={chooseResident}
         onExit={() => setAlwaysOn(false)}
       />
     );
@@ -175,7 +167,7 @@ export default function CompanionDevicePage() {
   if (standby) {
     return (
       <Standby
-        residentId={residentId}
+        residentId={resident?.id ?? ""}
         language={language}
         onExit={() => setStandby(false)}
       />
@@ -186,40 +178,21 @@ export default function CompanionDevicePage() {
     <main className="h-full flex flex-col items-center px-6 py-8 select-none">
       {/* Header */}
       <div className="w-full flex items-center justify-between max-w-md">
-        <span className="text-xl font-semibold opacity-90">Compagnon</span>
-        <div className="flex items-center gap-2">
-          {residents.length > 1 && (
-            <select
-              value={residentId}
-              onChange={(e) => {
-                setResidentId(e.target.value);
-                historyRef.current = [];
-                setLastUser("");
-                setLastReply("");
-                setConfirmation(undefined);
-              }}
-              className="px-2 py-1 rounded-lg text-sm font-medium bg-brand-500/40 text-white max-w-[7rem]"
+        <span className="text-xl font-semibold opacity-90">
+          Compagnon{resident ? ` · ${resident.preferredName ?? resident.firstName}` : ""}
+        </span>
+        <div className="flex gap-1">
+          {(["fr", "en"] as const).map((l) => (
+            <button
+              key={l}
+              onClick={() => setLanguage(l)}
+              className={`px-3 py-1 rounded-lg text-sm font-medium ${
+                language === l ? "bg-white text-brand-700" : "bg-brand-500/40 text-white"
+              }`}
             >
-              {residents.map((r) => (
-                <option key={r.id} value={r.id} className="text-gray-900">
-                  {r.preferredName ?? r.firstName}
-                </option>
-              ))}
-            </select>
-          )}
-          <div className="flex gap-1">
-            {(["fr", "en"] as const).map((l) => (
-              <button
-                key={l}
-                onClick={() => setLanguage(l)}
-                className={`px-3 py-1 rounded-lg text-sm font-medium ${
-                  language === l ? "bg-white text-brand-700" : "bg-brand-500/40 text-white"
-                }`}
-              >
-                {l.toUpperCase()}
-              </button>
-            ))}
-          </div>
+              {l.toUpperCase()}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -253,7 +226,7 @@ export default function CompanionDevicePage() {
         )}
       </div>
 
-      {/* Last exchange, shown large so it can also be read */}
+      {/* Last exchange */}
       <div className="w-full max-w-md flex flex-col gap-3 min-h-[6rem]">
         {lastUser && (
           <p className="text-base text-white/70 text-right">« {lastUser} »</p>
@@ -299,6 +272,56 @@ export default function CompanionDevicePage() {
         </button>
       </div>
     </main>
+  );
+}
+
+/** First-run screen: paste the pairing code generated on the dashboard. */
+function PairingScreen({ onPaired }: { onPaired: () => void }) {
+  const [code, setCode] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError("");
+    setDeviceToken(code);
+    try {
+      await getDeviceMe(); // validates the token
+      onPaired();
+    } catch {
+      clearDeviceToken();
+      setError("Code invalide. Vérifiez-le sur le tableau de bord.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="h-full flex flex-col items-center justify-center gap-6 px-8 text-center">
+      <div className="w-24 h-24 rounded-full bg-white/20 flex items-center justify-center text-5xl">📱</div>
+      <h1 className="text-white text-2xl font-bold">Appairer cet appareil</h1>
+      <p className="text-white/70 text-base max-w-xs leading-relaxed">
+        Collez le code d&apos;appairage généré sur le tableau de bord (fiche du résident → Appareils).
+      </p>
+      <form onSubmit={submit} className="w-full max-w-xs flex flex-col gap-3">
+        <input
+          value={code}
+          onChange={(e) => setCode(e.target.value)}
+          placeholder="Code d'appairage"
+          className="w-full rounded-xl px-4 py-3 text-gray-900 text-center"
+          autoFocus
+        />
+        {error && <p className="text-red-200 text-sm">{error}</p>}
+        <button
+          type="submit"
+          disabled={busy || !code.trim()}
+          className="w-full px-5 py-3 rounded-xl bg-white text-brand-700 font-bold disabled:opacity-50"
+        >
+          {busy ? "…" : "Appairer"}
+        </button>
+      </form>
+    </div>
   );
 }
 

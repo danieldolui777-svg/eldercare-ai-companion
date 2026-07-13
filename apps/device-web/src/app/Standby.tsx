@@ -126,7 +126,7 @@ export function Standby({
         setMessage(t("Préparez-vous…", "Get ready…"));
         await playJingle();
 
-        const ann = await announce(residentId, reminder.id);
+        const ann = await announce(reminder.id);
         setMessage(ann.text);
         await playEncoded(ann.audioBase64);
 
@@ -143,7 +143,6 @@ export function Standby({
           setPhase("thinking");
           setMessage(t("Un instant…", "One moment…"));
           const res = await converse({
-            residentId,
             audioBase64: rec.base64,
             mimeType: rec.mime,
             language,
@@ -176,13 +175,13 @@ export function Standby({
   const poll = useCallback(async () => {
     if (busyRef.current) return;
     try {
-      const due = await getDueReminders(residentId);
+      const due = await getDueReminders();
       const next = due.find((r) => !announcedRef.current.has(r.id));
       if (next) await handleReminder(next);
     } catch {
       /* transient network error — ignore, poll again next tick */
     }
-  }, [residentId, handleReminder]);
+  }, [handleReminder]);
 
   const start = useCallback(async () => {
     setError("");

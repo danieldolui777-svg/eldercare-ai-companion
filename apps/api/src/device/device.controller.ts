@@ -6,10 +6,12 @@ import {
   Body,
   HttpCode,
   HttpStatus,
+  NotFoundException,
 } from "@nestjs/common";
 import { z } from "zod";
 import { DeviceService } from "./device.service";
 import { PrismaService } from "../prisma/prisma.service";
+import { ReminderConfirmationService } from "../reminder/reminder-confirmation.service";
 import { ZodPipe } from "../common/zod.pipe";
 import { DeviceRoute, DeviceResidentId } from "./device.decorators";
 
@@ -20,6 +22,7 @@ export class DeviceController {
   constructor(
     private readonly devices: DeviceService,
     private readonly prisma: PrismaService,
+    private readonly confirmation: ReminderConfirmationService,
   ) {}
 
   // ── Caregiver-facing (protected by the global JWT guard) ────────────────────
@@ -67,5 +70,20 @@ export class DeviceController {
       take: 20,
       include: { medicationSchedule: { include: { medication: true } } },
     });
+  }
+
+  /** Mark a reminder missed (no response) — only for this device's own resident. */
+  @DeviceRoute()
+  @Post("device/reminders/:id/missed")
+  @HttpCode(HttpStatus.OK)
+  async missed(
+    @Param("id") id: string,
+    @DeviceResidentId() residentId: string,
+  ) {
+    const rem = await this.prisma.reminderEvent.findUnique({ where: { id } });
+    if (!rem || rem.residentId !== residentId) {
+      throw new NotFoundException("Reminder not found for this device");
+    }
+    return this.confirmation.markAsMissed(id);
   }
 }
