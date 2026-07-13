@@ -11,8 +11,10 @@ const HistorySchema = z.array(
   }),
 ).optional();
 
-// residentId is NOT accepted from the body — it is derived from the device token.
+// residentId normally comes from the device token; it is only read from the body
+// as a fallback in open mode (AUTH_DISABLED), hence optional here.
 const ConverseSchema = z.object({
+  residentId: z.string().min(1).optional(),
   audioBase64: z.string().min(1),
   mimeType: z.string().min(1),
   language: z.enum(["fr", "en"]).optional(),
@@ -20,12 +22,14 @@ const ConverseSchema = z.object({
 });
 
 const ChatTextSchema = z.object({
+  residentId: z.string().min(1).optional(),
   text: z.string().min(1),
   language: z.enum(["fr", "en"]).optional(),
   history: HistorySchema,
 });
 
 const AnnounceSchema = z.object({
+  residentId: z.string().min(1).optional(),
   reminderId: z.string().min(1),
 });
 
@@ -41,9 +45,9 @@ export class VoiceController {
   @HttpCode(HttpStatus.OK)
   converse(
     @Body(new ZodPipe(ConverseSchema)) body: any,
-    @DeviceResidentId() residentId: string,
+    @DeviceResidentId() residentId?: string,
   ) {
-    return this.voiceService.converse({ ...body, residentId });
+    return this.voiceService.converse({ ...body, residentId: residentId ?? body.residentId });
   }
 
   // Text-based turn: client already has the transcript (Web Speech API wake-word
@@ -53,9 +57,9 @@ export class VoiceController {
   @HttpCode(HttpStatus.OK)
   chatText(
     @Body(new ZodPipe(ChatTextSchema)) body: any,
-    @DeviceResidentId() residentId: string,
+    @DeviceResidentId() residentId?: string,
   ) {
-    return this.voiceService.chatText({ ...body, residentId });
+    return this.voiceService.chatText({ ...body, residentId: residentId ?? body.residentId });
   }
 
   @DeviceRoute()
@@ -63,16 +67,19 @@ export class VoiceController {
   @HttpCode(HttpStatus.OK)
   announce(
     @Body(new ZodPipe(AnnounceSchema)) body: any,
-    @DeviceResidentId() residentId: string,
+    @DeviceResidentId() residentId?: string,
   ) {
-    return this.voiceService.announce({ ...body, residentId });
+    return this.voiceService.announce({ ...body, residentId: residentId ?? body.residentId });
   }
 
   // Creates an immediate test reminder for the device's resident.
   @DeviceRoute()
   @Post("voice/test-reminder")
   @HttpCode(HttpStatus.OK)
-  testReminder(@DeviceResidentId() residentId: string) {
-    return this.voiceService.createTestReminder(residentId);
+  testReminder(
+    @Body() body: any,
+    @DeviceResidentId() residentId?: string,
+  ) {
+    return this.voiceService.createTestReminder(residentId ?? body?.residentId);
   }
 }

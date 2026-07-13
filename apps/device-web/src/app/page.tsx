@@ -2,9 +2,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   converse,
+  getBoundResident,
   getDeviceMe,
+  getResidents,
   getDeviceToken,
   setDeviceToken,
+  setOpenResidentId,
   clearDeviceToken,
   type ChatTurn,
   type DeviceResident,
@@ -23,27 +26,45 @@ export default function CompanionDevicePage() {
   const [error, setError] = useState("");
   const [needsTapToHear, setNeedsTapToHear] = useState(false);
   const [resident, setResident] = useState<DeviceResident | null>(null);
+  const [residents, setResidents] = useState<DeviceResident[]>([]); // open mode only
   const [paired, setPaired] = useState<boolean | null>(null); // null = checking
+  const openMode = !getDeviceToken();
   const [confirmation, setConfirmation] =
     useState<ConverseResponse["confirmation"]>(undefined);
   const [standby, setStandby] = useState(false);
   const [alwaysOn, setAlwaysOn] = useState(true);
 
-  // Resolve which resident this device is bound to, from its pairing token.
+  // Resolve the current resident: from the pairing token (secure) or, in open
+  // mode, from the resident list (works like before, no login needed).
   const loadDevice = useCallback(async () => {
-    if (!getDeviceToken()) { setPaired(false); return; }
     try {
-      const me = await getDeviceMe();
+      const me = await getBoundResident();
+      if (!me) { setPaired(false); return; } // secured API + no token → pairing
       setResident(me);
       setLanguage((me.language as "fr" | "en") ?? "fr");
       setPaired(true);
+      if (!getDeviceToken()) {
+        setResidents(await getResidents().catch(() => []));
+      }
     } catch {
+      // API is secured and this device has no valid token → show pairing.
       clearDeviceToken();
       setPaired(false);
     }
   }, []);
 
   useEffect(() => { loadDevice(); }, [loadDevice]);
+
+  // Switch resident in open mode (remembered on this device).
+  const chooseResident = useCallback((rid: string) => {
+    setOpenResidentId(rid);
+    const chosen = residents.find((r) => r.id === rid);
+    if (chosen) {
+      setResident(chosen);
+      setLanguage((chosen.language as "fr" | "en") ?? "fr");
+    }
+    historyRef.current = [];
+  }, [residents]);
 
   const historyRef = useRef<ChatTurn[]>([]);
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -159,6 +180,8 @@ export default function CompanionDevicePage() {
         residentId={resident?.id ?? ""}
         residentName={resident?.preferredName ?? resident?.firstName}
         language={language}
+        residents={openMode ? residents : undefined}
+        onResidentChange={openMode ? chooseResident : undefined}
         onExit={() => setAlwaysOn(false)}
       />
     );

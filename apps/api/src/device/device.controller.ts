@@ -78,10 +78,12 @@ export class DeviceController {
   @HttpCode(HttpStatus.OK)
   async missed(
     @Param("id") id: string,
-    @DeviceResidentId() residentId: string,
+    @DeviceResidentId() residentId?: string,
   ) {
     const rem = await this.prisma.reminderEvent.findUnique({ where: { id } });
-    if (!rem || rem.residentId !== residentId) {
+    if (!rem) throw new NotFoundException("Reminder not found");
+    // Enforce ownership only when we have a token identity (paired mode).
+    if (residentId && rem.residentId !== residentId) {
       throw new NotFoundException("Reminder not found for this device");
     }
     return this.confirmation.markAsMissed(id);

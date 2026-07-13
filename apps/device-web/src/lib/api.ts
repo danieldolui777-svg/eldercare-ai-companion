@@ -1,9 +1,13 @@
 const BASE =
   process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000/api/v1";
 
-// ── Device token (pairing) ─────────────────────────────────────────────────────
-// The device is bound to ONE resident via a token generated on the dashboard.
+// ── Two modes ───────────────────────────────────────────────────────────────
+//  - Paired (secure): a device token binds this device to ONE resident.
+//  - Open (prototype): no token; the resident is chosen here and sent in the body.
+//    Works only while the API runs in open mode (AUTH_DISABLED default).
 const DEVICE_TOKEN_KEY = "deviceToken";
+const OPEN_RID_KEY = "openResidentId";
+
 export function getDeviceToken(): string | null {
   try { return localStorage.getItem(DEVICE_TOKEN_KEY); } catch { return null; }
 }
@@ -13,14 +17,32 @@ export function setDeviceToken(t: string) {
 export function clearDeviceToken() {
   try { localStorage.removeItem(DEVICE_TOKEN_KEY); } catch { /* ignore */ }
 }
+export function getOpenResidentId(): string | null {
+  try { return localStorage.getItem(OPEN_RID_KEY); } catch { return null; }
+}
+export function setOpenResidentId(id: string) {
+  try { localStorage.setItem(OPEN_RID_KEY, id); } catch { /* ignore */ }
+}
+
+function deviceHeaders(): Record<string, string> {
+  const t = getDeviceToken();
+  return t ? { "X-Device-Token": t } : {};
+}
+/** In open mode (no token) inject the chosen residentId into the request body. */
+function withResident<T extends object>(obj: T): T & { residentId?: string } {
+  if (!getDeviceToken()) {
+    const rid = getOpenResidentId();
+    if (rid) return { ...obj, residentId: rid };
+  }
+  return obj;
+}
 
 async function devReq<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = getDeviceToken();
   const res = await fetch(`${BASE}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
-      ...(token ? { "X-Device-Token": token } : {}),
+      ...deviceHeaders(),
       ...(init?.headers ?? {}),
     },
   });
@@ -34,14 +56,29 @@ export interface ChatTurn {
   content: string;
 }
 
-/** The resident this device is bound to. */
+/** The resident this device is acting for. */
 export interface DeviceResident {
   id: string;
   firstName: string;
   preferredName?: string;
   language?: "fr" | "en";
 }
-export const getDeviceMe = () => devReq<DeviceResident>("/device/me");
+
+/** All residents — only reachable in open mode (used to pick who to talk to). */
+export const getResidents = () => devReq<DeviceResident[]>("/residents");
+
+/** Resolve the current resident: from the device token (paired) or the picker (open). */
+export async function getBoundResident(): Promise<DeviceResident | null> {
+  if (getDeviceToken()) return devReq<DeviceResident>("/device/me");
+  const list = await getResidents();
+  if (list.length === 0) return null;
+  const rid = getOpenResidentId();
+  const chosen = list.find((r) => r.id === rid) ?? list[0];
+  setOpenResidentId(chosen.id);
+  return chosen;
+}
+// Back-compat alias.
+export const getDeviceMe = getBoundResident;
 
 export interface ConverseResponse {
   transcript: string;
@@ -54,14 +91,13 @@ export interface ConverseResponse {
   };
 }
 
-/** Text-based turn — resident is derived from the device token, not sent. */
 export const chat = (data: {
   text: string;
   language?: "fr" | "en";
   history?: ChatTurn[];
 }) => devReq<ConverseResponse>("/voice/chat", {
   method: "POST",
-  body: JSON.stringify(data),
+  body: JSON.stringify(withResident(data)),
 });
 
 export const converse = (data: {
@@ -71,7 +107,7 @@ export const converse = (data: {
   history?: ChatTurn[];
 }) => devReq<ConverseResponse>("/voice/converse", {
   method: "POST",
-  body: JSON.stringify(data),
+  body: JSON.stringify(withResident(data)),
 });
 
 export interface DueReminder {
@@ -80,9 +116,11 @@ export interface DueReminder {
   scheduledAt: string;
 }
 
-/** Reminders due now for this device's resident. */
 export async function getDueReminders(): Promise<DueReminder[]> {
-  const all = await devReq<any[]>("/device/reminders");
+  const path = getDeviceToken()
+    ? "/device/reminders"
+    : `/residents/${getOpenResidentId()}/reminders`;
+  const all = await devReq<any[]>(path);
   const now = Date.now();
   return all
     .filter(
@@ -105,10 +143,9 @@ export interface AnnounceResponse {
 export const createTestReminder = () =>
   devReq<{ reminderId: string }>("/voice/test-reminder", {
     method: "POST",
-    body: "{}",
+    body: JSON.stringify(withResident({})),
   });
 
-/** Marks a reminder as missed (no response) for this device's resident. */
 export const markReminderMissed = (reminderId: string) =>
   devReq<void>(`/device/reminders/${reminderId}/missed`, {
     method: "POST",
@@ -118,5 +155,5 @@ export const markReminderMissed = (reminderId: string) =>
 export const announce = (reminderId: string) =>
   devReq<AnnounceResponse>("/voice/announce", {
     method: "POST",
-    body: JSON.stringify({ reminderId }),
+    body: JSON.stringify(withResident({ reminderId })),
   });

@@ -35,27 +35,36 @@ export class AuthGuard implements CanActivate {
 
     const req = context.switchToHttp().getRequest();
 
+    // Prototype default: the API is OPEN unless AUTH_DISABLED is explicitly set
+    // to "false". We still attach identity when a token is present, but never
+    // reject in open mode. Set AUTH_DISABLED=false on the host to enforce auth.
+    const authDisabled = process.env.AUTH_DISABLED !== "false";
+
     // Device-authenticated route.
     if (meta<boolean>(DEVICE_ROUTE_KEY)) {
       const token: string | undefined =
         req.headers?.["x-device-token"] ?? undefined;
       const residentId = await this.devices.resolveResidentId(token);
-      if (!residentId) throw new UnauthorizedException("Invalid device token");
-      req.deviceResidentId = residentId;
-      return true;
+      if (residentId) {
+        req.deviceResidentId = residentId;
+        return true;
+      }
+      if (authDisabled) return true; // resident id falls back to the request body
+      throw new UnauthorizedException("Invalid device token");
     }
 
     // Caregiver-authenticated route.
     const header: string = req.headers?.authorization ?? "";
     const [scheme, token] = header.split(" ");
-    if (scheme !== "Bearer" || !token) {
-      throw new UnauthorizedException("Missing bearer token");
+    if (scheme === "Bearer" && token) {
+      try {
+        req.user = await this.jwt.verifyAsync(token);
+        return true;
+      } catch {
+        if (!authDisabled) throw new UnauthorizedException("Invalid or expired token");
+      }
     }
-    try {
-      req.user = await this.jwt.verifyAsync(token);
-      return true;
-    } catch {
-      throw new UnauthorizedException("Invalid or expired token");
-    }
+    if (authDisabled) return true;
+    throw new UnauthorizedException("Missing bearer token");
   }
 }

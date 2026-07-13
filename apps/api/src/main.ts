@@ -45,7 +45,11 @@ async function bootstrap() {
     // query — a paired device can only open a session for its own resident.
     const url = new URL(req.url ?? "/", "http://localhost");
     const token = url.searchParams.get("token") ?? undefined;
-    const residentId = await devices.resolveResidentId(token).catch(() => null);
+    let residentId = await devices.resolveResidentId(token).catch(() => null);
+    // Open mode (default unless AUTH_DISABLED=false): fall back to residentId query.
+    if (!residentId && process.env.AUTH_DISABLED !== "false") {
+      residentId = url.searchParams.get("residentId");
+    }
     if (!residentId) {
       ws.close(4001, "Invalid device token");
       return;

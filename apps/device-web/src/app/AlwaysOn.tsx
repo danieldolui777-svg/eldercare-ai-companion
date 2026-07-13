@@ -32,11 +32,15 @@ export function AlwaysOn({
   residentId,
   residentName,
   language,
+  residents,
+  onResidentChange,
   onExit,
 }: {
   residentId: string;
   residentName?: string;
   language: "fr" | "en";
+  residents?: { id: string; firstName: string; preferredName?: string }[];
+  onResidentChange?: (id: string) => void;
   onExit: () => void;
 }) {
   const [phase, setPhase] = useState<Phase>("idle");
@@ -282,6 +286,7 @@ export function AlwaysOn({
       const deviceToken = getDeviceToken() ?? "";
       const wsUrl =
         `${wsBase}/voice/realtime?token=${encodeURIComponent(deviceToken)}` +
+        `&residentId=${encodeURIComponent(residentId)}` + // open-mode fallback
         `&language=${language}&voice=${voiceRef.current}` +
         `&eagerness=${eagernessRef.current}&nr=${noiseRedRef.current}`;
 
@@ -925,6 +930,9 @@ export function AlwaysOn({
           eagerness={eagerness}
           noiseRed={noiseRed}
           wakeEngine={wakeEngine}
+          residents={residents}
+          residentId={residentId}
+          onResidentChange={onResidentChange}
           onVoice={setVoice}
           onEagerness={setEagerness}
           onNoiseRed={setNoiseRed}
@@ -1030,6 +1038,9 @@ function SettingsPanel({
   eagerness,
   noiseRed,
   wakeEngine,
+  residents,
+  residentId,
+  onResidentChange,
   onVoice,
   onEagerness,
   onNoiseRed,
@@ -1041,6 +1052,9 @@ function SettingsPanel({
   eagerness: "low" | "medium" | "high";
   noiseRed: "far_field" | "near_field" | "off";
   wakeEngine: "web" | "picovoice";
+  residents?: { id: string; firstName: string; preferredName?: string }[];
+  residentId: string;
+  onResidentChange?: (id: string) => void;
   onVoice: (v: string) => void;
   onEagerness: (e: "low" | "medium" | "high") => void;
   onNoiseRed: (n: "far_field" | "near_field" | "off") => void;
@@ -1053,6 +1067,26 @@ function SettingsPanel({
         <h2 className="text-white text-xl font-bold">{t("Réglages (test)", "Settings (test)")}</h2>
         <button onClick={onClose} className="text-white/70 text-2xl">✕</button>
       </div>
+
+      {/* Resident picker (open mode only) */}
+      {onResidentChange && residents && residents.length > 0 && (
+        <>
+          <label className="text-white/80 text-sm font-medium">
+            {t("Personne suivie (mode ouvert)", "Person (open mode)")}
+          </label>
+          <select
+            value={residentId}
+            onChange={(e) => onResidentChange(e.target.value)}
+            className="mt-2 mb-4 px-3 py-3 rounded-xl text-sm bg-white/10 text-white border border-white/20"
+          >
+            {residents.map((r) => (
+              <option key={r.id} value={r.id} className="text-gray-900">
+                {r.preferredName ?? r.firstName}
+              </option>
+            ))}
+          </select>
+        </>
+      )}
 
       {/* Wake-word engine */}
       <label className="text-white/80 text-sm font-medium mt-2">
