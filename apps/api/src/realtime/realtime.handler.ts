@@ -4,7 +4,7 @@ import WebSocket from "ws";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { MemoryService } from "../memory/memory.service";
-import { buildCompanionSystemPrompt } from "@eldercare/ai-providers";
+import { buildCompanionSystemPrompt, formatToday } from "@eldercare/ai-providers";
 
 const OPENAI_REALTIME_URL =
   "wss://api.openai.com/v1/realtime?model=gpt-realtime-mini";
@@ -124,6 +124,7 @@ export class RealtimeHandler {
       residentFirstName,
       dueReminders,
       memoryFacts,
+      currentDate: formatToday(language),
       gender: residentGender,
       familyContact,
     });

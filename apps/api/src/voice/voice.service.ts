@@ -2,6 +2,7 @@ import { Injectable, Logger, NotFoundException } from "@nestjs/common";
 import {
   OpenAiSpeechProvider,
   OpenAiCompanionChatProvider,
+  formatToday,
   type ChatMessage,
   type DueReminder,
   type MedicationReminderRef,
@@ -142,6 +143,7 @@ export class VoiceService {
         language,
         residentFirstName: resident?.preferredName ?? resident?.firstName,
         dueReminders,
+        currentDate: formatToday(language),
       },
     );
 
@@ -230,6 +232,7 @@ export class VoiceService {
         residentFirstName: resident?.preferredName ?? resident?.firstName,
         dueReminders,
         memoryFacts,
+        currentDate: formatToday(language),
         gender: (resident?.gender as any) ?? undefined,
         familyContact: resident
           ? {

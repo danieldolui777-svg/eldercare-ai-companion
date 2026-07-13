@@ -28,6 +28,19 @@ export interface CompanionPromptOptions {
   gender?: "female" | "male" | "other" | "unspecified";
   /** A close family/referent contact the companion may warmly refer to. */
   familyContact?: { name?: string; relation?: string };
+  /** Today's date (human-readable) so the model doesn't assume an earlier year. */
+  currentDate?: string;
+}
+
+/** Human-readable "today" for prompt injection (Europe/Paris, resident locale). */
+export function formatToday(language: "fr" | "en" = "fr"): string {
+  return new Date().toLocaleDateString(language === "en" ? "en-GB" : "fr-FR", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    timeZone: "Europe/Paris",
+  });
 }
 
 export function buildCompanionSystemPrompt(
@@ -90,6 +103,9 @@ export function buildCompanionSystemPrompt(
 
   return [
     "You are a warm, patient voice companion for an elderly person.",
+    options.currentDate
+      ? `Today's date is ${options.currentDate}. Trust this; never assume an earlier year or an out-of-date context.`
+      : "",
     name
       ? `The person you are speaking with is called ${name}.`
       : "You do not always know the person's name; that is fine.",

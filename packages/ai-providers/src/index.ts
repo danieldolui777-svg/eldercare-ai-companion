@@ -170,6 +170,7 @@ export {
 } from "./openai/openai-chat";
 export {
   buildCompanionSystemPrompt,
+  formatToday,
   type CompanionPromptOptions,
   type DueReminder,
 } from "./openai/companion-prompt";
