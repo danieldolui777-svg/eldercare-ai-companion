@@ -61,10 +61,12 @@ export class TavilyWebSearch implements WebSearchProvider {
  */
 export class OpenAiWebSearch implements WebSearchProvider {
   readonly name = "openai";
+  // gpt-4o-mini does NOT support the web_search tool; gpt-4.1 does. Only this
+  // occasional search sub-call uses it — the main companion stays on its model.
   constructor(
     private readonly client: OpenAI,
-    private readonly model: string = "gpt-4o-mini",
-    private readonly toolType: string = "web_search_preview",
+    private readonly model: string = "gpt-4.1",
+    private readonly toolType: string = "web_search",
   ) {}
 
   async search(query: string): Promise<WebSearchResult> {
