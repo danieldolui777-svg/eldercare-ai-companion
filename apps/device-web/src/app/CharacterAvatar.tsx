@@ -17,17 +17,45 @@ const FRAMES: Record<CharacterState, string[]> = {
 
 const FPS = 4; // deliberately low — the "lag" is the charm (stop-motion feel)
 
-export function CharacterAvatar({ state }: { state: CharacterState }) {
+/**
+ * @param effects  optional "laggy video call" feel: occasional frame freezes and
+ *                 brief glitch (blur/skew) hiccups. Subtle. Toggle off to disable.
+ */
+export function CharacterAvatar({
+  state,
+  effects = true,
+}: {
+  state: CharacterState;
+  effects?: boolean;
+}) {
   const [idx, setIdx] = useState(0);
+  const [glitch, setGlitch] = useState(false);
 
+  // Frame swapper — with an occasional "freeze" when effects are on.
   useEffect(() => {
     const frames = FRAMES[state] ?? FRAMES.idle;
     setIdx(0);
     const id = setInterval(() => {
+      if (effects && Math.random() < 0.18) return; // hold the frame (fake lag)
       setIdx((i) => (i + 1) % frames.length);
     }, 1000 / FPS);
     return () => clearInterval(id);
-  }, [state]);
+  }, [state, effects]);
+
+  // Occasional brief glitch — like a video-call hiccup (every 3–7s, ~180ms).
+  useEffect(() => {
+    if (!effects) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const loop = () => {
+      timer = setTimeout(() => {
+        setGlitch(true);
+        setTimeout(() => setGlitch(false), 150 + Math.random() * 130);
+        loop();
+      }, 3000 + Math.random() * 4000);
+    };
+    loop();
+    return () => clearTimeout(timer);
+  }, [effects]);
 
   const frames = FRAMES[state] ?? FRAMES.idle;
   const frame = frames[idx % frames.length];
@@ -35,12 +63,29 @@ export function CharacterAvatar({ state }: { state: CharacterState }) {
 
   return (
     <div className="w-56 h-56 rounded-3xl bg-white/10 border border-white/15 flex items-center justify-center overflow-hidden shadow-lg">
-      {isImage ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={frame} alt="" className="w-full h-full object-cover" />
-      ) : (
-        <span className="text-8xl leading-none select-none">{frame}</span>
-      )}
+      <div
+        className="w-full h-full flex items-center justify-center"
+        style={
+          glitch
+            ? {
+                filter: "blur(1.3px) contrast(1.4) saturate(1.15)",
+                transform: "translateX(2px) skewX(-1.2deg)",
+              }
+            : undefined
+        }
+      >
+        {isImage ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={frame}
+            alt=""
+            className="w-full h-full object-cover"
+            style={{ imageRendering: glitch ? "pixelated" : "auto" }}
+          />
+        ) : (
+          <span className="text-8xl leading-none select-none">{frame}</span>
+        )}
+      </div>
     </div>
   );
 }

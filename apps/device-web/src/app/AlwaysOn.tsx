@@ -64,6 +64,8 @@ export function AlwaysOn({
   // Input noise reduction: "far_field" (room mic), "near_field" (close), "off".
   const [noiseRed, setNoiseRed] = useState<"far_field" | "near_field" | "off">("far_field");
   const [wakeEngine, setWakeEngine] = useState<"web" | "picovoice">("web");
+  // Optional "laggy video call" visual effect on the character.
+  const [videoFx, setVideoFx] = useState(true);
   // Mirrored in refs so the WebSocket-building callback reads the latest value
   const voiceRef = useRef(voice);
   const eagernessRef = useRef(eagerness);
@@ -933,18 +935,20 @@ export function AlwaysOn({
           wakeEngine={wakeEngine}
           residents={residents}
           residentId={residentId}
+          videoFx={videoFx}
           onResidentChange={onResidentChange}
           onVoice={setVoice}
           onEagerness={setEagerness}
           onNoiseRed={setNoiseRed}
           onWakeEngine={changeWakeEngine}
+          onVideoFx={setVideoFx}
           onClose={() => setShowSettings(false)}
         />
       )}
 
       <div className="text-6xl font-light tabular-nums opacity-80">{clock}</div>
 
-      <CharacterAvatar state={charState} />
+      <CharacterAvatar state={charState} effects={videoFx} />
 
       <p className="text-white text-lg font-medium min-h-[2.5rem] max-w-xs">{statusText}</p>
 
@@ -1036,11 +1040,13 @@ function SettingsPanel({
   wakeEngine,
   residents,
   residentId,
+  videoFx,
   onResidentChange,
   onVoice,
   onEagerness,
   onNoiseRed,
   onWakeEngine,
+  onVideoFx,
   onClose,
 }: {
   t: (fr: string, en: string) => string;
@@ -1050,11 +1056,13 @@ function SettingsPanel({
   wakeEngine: "web" | "picovoice";
   residents?: { id: string; firstName: string; preferredName?: string }[];
   residentId: string;
+  videoFx: boolean;
   onResidentChange?: (id: string) => void;
   onVoice: (v: string) => void;
   onEagerness: (e: "low" | "medium" | "high") => void;
   onNoiseRed: (n: "far_field" | "near_field" | "off") => void;
   onWakeEngine: (e: "web" | "picovoice") => void;
+  onVideoFx: (v: boolean) => void;
   onClose: () => void;
 }) {
   return (
@@ -1183,6 +1191,29 @@ function SettingsPanel({
         {t(
           "« Pièce » filtre le bruit autour (tablette posée). « Proche » si le patient tient le téléphone.",
           '"Room" filters surrounding noise (tablet on a table). "Close" if the patient holds the phone.',
+        )}
+      </p>
+
+      {/* Character video effect */}
+      <label className="flex items-center justify-between mt-5">
+        <span className="text-white/80 text-sm font-medium">
+          {t("Effet vidéo « qui lague »", 'Laggy "video call" effect')}
+        </span>
+        <button
+          onClick={() => onVideoFx(!videoFx)}
+          className={`px-4 py-2 rounded-xl text-sm border ${
+            videoFx
+              ? "bg-green-500 text-white border-green-400"
+              : "bg-white/10 text-white/70 border-white/20"
+          }`}
+        >
+          {videoFx ? t("Activé", "On") : t("Désactivé", "Off")}
+        </button>
+      </label>
+      <p className="text-white/50 text-xs mt-2 leading-relaxed">
+        {t(
+          "Petits gels d'image et grésillements, comme un appel vidéo qui lague.",
+          "Small freezes and glitches, like a laggy video call.",
         )}
       </p>
 
