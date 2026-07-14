@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { CharacterAvatar, type CharacterState } from "./CharacterAvatar";
 import {
   chat as apiChat,
   announce,
@@ -51,6 +52,8 @@ export function AlwaysOn({
   const [badge, setBadge] = useState("");
   const [error, setError] = useState("");
   const [browserOk, setBrowserOk] = useState(true);
+  // True while the AI is actually talking (drives the character's "speaking" face).
+  const [aiSpeaking, setAiSpeaking] = useState(false);
 
   // ── Tunable settings (testing panel) ───────────────────────────────────────────
   const [showSettings, setShowSettings] = useState(false);
@@ -150,6 +153,7 @@ export function AlwaysOn({
     activeSrcsRef.current = [];
     nextPlayTimeRef.current = 0;
     aiPlayingRef.current = false;
+    setAiSpeaking(false);
   }, []);
 
   /** Play a single base64-encoded audio blob (TTS fallback path). */
@@ -375,11 +379,13 @@ export function AlwaysOn({
         switch (msg.type as string) {
           case "audio":
             aiPlayingRef.current = true;
+            setAiSpeaking(true);
             playPCM16Chunk(msg.delta as string);
             break;
 
           case "speech_started":
             // User started speaking — interrupt AI audio immediately
+            setAiSpeaking(false);
             stopCurrentAudio();
             break;
 
@@ -404,6 +410,7 @@ export function AlwaysOn({
 
           case "response.done":
             aiPlayingRef.current = false;
+            setAiSpeaking(false);
             resetSessionTimer();
             break;
 
@@ -872,23 +879,17 @@ export function AlwaysOn({
       ? wakeLabel || t("Je vous écoute — répondez", "Listening — please answer")
       : t("En écoute — dites « Daniel »", 'Listening — say "Daniel"');
 
-  const ringClass =
-    phase === "session"
-      ? "bg-purple-400 scale-110"
-      : phase === "activated" || phase === "confirming"
-      ? "bg-green-400 scale-110"
-      : phase === "thinking"
-      ? "bg-yellow-300"
+  // Which face the character shows, derived from what the app is doing.
+  const charState: CharacterState =
+    phase === "thinking"
+      ? "thinking"
       : phase === "speaking" || phase === "announcing"
-      ? "bg-blue-400"
-      : "bg-white/20";
-
-  const pingColor =
-    phase === "session"
-      ? "bg-purple-400"
+      ? "speaking"
+      : phase === "session"
+      ? aiSpeaking ? "speaking" : "listening"
       : phase === "activated" || phase === "confirming"
-      ? "bg-green-400"
-      : "bg-blue-400";
+      ? "listening"
+      : "idle";
 
   // Switch wake-word engine live. Voice/VAD changes apply on the next session
   // (they're read when the WebSocket URL is built), so only the engine needs a
@@ -943,12 +944,7 @@ export function AlwaysOn({
 
       <div className="text-6xl font-light tabular-nums opacity-80">{clock}</div>
 
-      <div className="relative flex items-center justify-center h-32">
-        {(phase === "session" || phase === "speaking" || phase === "announcing" || phase === "activated" || phase === "confirming") && (
-          <div className={`absolute w-36 h-36 rounded-full animate-ping opacity-30 ${pingColor}`} />
-        )}
-        <div className={`w-28 h-28 rounded-full transition-all duration-200 ${ringClass}`} />
-      </div>
+      <CharacterAvatar state={charState} />
 
       <p className="text-white text-lg font-medium min-h-[2.5rem] max-w-xs">{statusText}</p>
 
