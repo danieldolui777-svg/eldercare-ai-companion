@@ -36,11 +36,22 @@ export class PrescriptionService {
     if (!this.configured) {
       throw new Error("Prescription scanning is not configured (missing OPENAI_API_KEY).");
     }
-    const draft = await this.scanner.scan({
-      imageBase64: input.imageBase64,
-      mimeType: input.mimeType,
-      language: input.language,
-    });
+    let draft: PrescriptionDraft;
+    try {
+      draft = await this.scanner.scan({
+        imageBase64: input.imageBase64,
+        mimeType: input.mimeType,
+        language: input.language,
+      });
+    } catch (err) {
+      // Bad/unreadable image, oversized, etc. — fail gracefully, not a 500.
+      this.logger.warn(`prescription scan failed: ${(err as Error).message}`);
+      return {
+        medications: [],
+        confidence: "low",
+        notes: "Image illisible ou trop volumineuse. Réessayez avec une photo nette et bien cadrée.",
+      };
+    }
     // Audit metadata only — never the image or full extracted content.
     await this.audit
       .log({
