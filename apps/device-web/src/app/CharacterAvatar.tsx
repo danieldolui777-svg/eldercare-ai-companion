@@ -24,9 +24,11 @@ const FPS = 4; // deliberately low — the "lag" is the charm (stop-motion feel)
 export function CharacterAvatar({
   state,
   effects = true,
+  fullScreen = false,
 }: {
   state: CharacterState;
   effects?: boolean;
+  fullScreen?: boolean;
 }) {
   const [idx, setIdx] = useState(0);
   const [glitch, setGlitch] = useState(false);
@@ -61,8 +63,12 @@ export function CharacterAvatar({
   const frame = frames[idx % frames.length];
   const isImage = frame.startsWith("/") || frame.startsWith("http");
 
+  const outerClass = fullScreen
+    ? "absolute inset-0 w-full h-full flex items-center justify-center overflow-hidden"
+    : "w-56 h-56 rounded-3xl bg-white/10 border border-white/15 flex items-center justify-center overflow-hidden shadow-lg";
+
   return (
-    <div className="w-56 h-56 rounded-3xl bg-white/10 border border-white/15 flex items-center justify-center overflow-hidden shadow-lg">
+    <div className={outerClass}>
       <div
         className="w-full h-full flex items-center justify-center"
         style={
@@ -83,7 +89,9 @@ export function CharacterAvatar({
             style={{ imageRendering: glitch ? "pixelated" : "auto" }}
           />
         ) : (
-          <span className="text-8xl leading-none select-none">{frame}</span>
+          <span className={fullScreen ? "text-[10rem] leading-none select-none" : "text-8xl leading-none select-none"}>
+            {frame}
+          </span>
         )}
       </div>
     </div>

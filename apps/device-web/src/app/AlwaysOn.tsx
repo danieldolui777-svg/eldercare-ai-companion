@@ -66,6 +66,8 @@ export function AlwaysOn({
   const [wakeEngine, setWakeEngine] = useState<"web" | "picovoice">("web");
   // Optional "laggy video call" visual effect on the character.
   const [videoFx, setVideoFx] = useState(true);
+  // Optional self-view: show the user's own camera (local only, never sent).
+  const [cameraOn, setCameraOn] = useState(false);
   // Mirrored in refs so the WebSocket-building callback reads the latest value
   const voiceRef = useRef(voice);
   const eagernessRef = useRef(eagerness);
@@ -909,22 +911,22 @@ export function AlwaysOn({
   };
 
   return (
-    <div className="relative h-full flex flex-col items-center justify-center gap-5 px-6 text-center">
-      {/* Active resident name — confirms which person the device is bound to */}
-      {residentName && (
-        <div className="absolute top-4 left-4 text-white/60 text-sm font-medium">
-          👤 {residentName}
+    <div className="relative h-full w-full overflow-hidden bg-gradient-to-b from-brand-600 to-brand-900">
+      {/* Full-screen character — the "person" on the call */}
+      <CharacterAvatar state={charState} effects={videoFx} fullScreen />
+
+      {/* Self-view (user's own camera) — local only, like WhatsApp */}
+      {cameraOn && (
+        <div className="absolute top-4 right-4 z-10">
+          <SelfView />
         </div>
       )}
 
-      {/* Settings gear (testing panel) */}
-      <button
-        onClick={() => setShowSettings((s) => !s)}
-        className="absolute top-4 right-4 text-2xl opacity-60 active:opacity-100"
-        aria-label={t("Réglages", "Settings")}
-      >
-        ⚙️
-      </button>
+      {/* Top bar: who you're "calling" + live status */}
+      <div className="absolute top-4 left-4 z-10 text-white drop-shadow-lg">
+        <div className="text-xl font-semibold">{residentName ?? "Compagnon"}</div>
+        <div className="text-xs opacity-90">{statusText}</div>
+      </div>
 
       {showSettings && (
         <SettingsPanel
@@ -936,28 +938,22 @@ export function AlwaysOn({
           residents={residents}
           residentId={residentId}
           videoFx={videoFx}
+          cameraOn={cameraOn}
           onResidentChange={onResidentChange}
           onVoice={setVoice}
           onEagerness={setEagerness}
           onNoiseRed={setNoiseRed}
           onWakeEngine={changeWakeEngine}
           onVideoFx={setVideoFx}
+          onCameraOn={setCameraOn}
           onClose={() => setShowSettings(false)}
         />
       )}
 
-      <div className="text-6xl font-light tabular-nums opacity-80">{clock}</div>
-
-      <CharacterAvatar state={charState} effects={videoFx} />
-
-      <p className="text-white text-lg font-medium min-h-[2.5rem] max-w-xs">{statusText}</p>
-
-      <div className="w-full max-w-md flex flex-col gap-3 min-h-[7rem]">
-        {lastUser && (
-          <p className="text-white/55 text-right text-sm italic">« {lastUser} »</p>
-        )}
+      {/* Bottom overlay: caption + call controls */}
+      <div className="absolute bottom-0 inset-x-0 z-10 flex flex-col items-center gap-3 p-5 bg-gradient-to-t from-black/60 via-black/25 to-transparent">
         {lastReply && (
-          <div className="bg-white text-gray-900 rounded-2xl px-5 py-4 text-xl leading-relaxed">
+          <div className="max-w-md bg-black/45 text-white rounded-2xl px-5 py-3 text-lg leading-relaxed text-center backdrop-blur-sm">
             {lastReply}
           </div>
         )}
@@ -965,46 +961,95 @@ export function AlwaysOn({
           <div className="bg-green-600/90 text-white rounded-xl px-4 py-2 font-medium">{badge}</div>
         )}
         {error && (
-          <p className="bg-red-500/80 text-white rounded-xl px-4 py-2 text-sm">{error}</p>
+          <p className="bg-red-500/85 text-white rounded-xl px-4 py-2 text-sm">{error}</p>
         )}
+
+        {/* Controls row (like a call bar) */}
+        <div className="flex items-center gap-4 mt-1">
+          <button
+            onClick={() => setShowSettings((s) => !s)}
+            className="w-12 h-12 rounded-full bg-white/15 text-white text-xl flex items-center justify-center active:bg-white/25"
+            aria-label={t("Réglages", "Settings")}
+          >
+            ⚙️
+          </button>
+
+          {phase === "passive" && (
+            <button
+              onClick={async () => {
+                try {
+                  const { reminderId } = await createTestReminder();
+                  announcedRef.current.clear();
+                  const due: DueReminder[] = [
+                    { id: reminderId, medicationName: "test", scheduledAt: new Date().toISOString() },
+                  ];
+                  await handleReminderRef.current(due[0]);
+                } catch (e: any) {
+                  setError(e?.message ?? t("Erreur test rappel", "Test reminder error"));
+                  setTimeout(() => setError(""), 4_000);
+                }
+              }}
+              className="w-12 h-12 rounded-full bg-white/15 text-white text-xl flex items-center justify-center active:bg-white/25"
+              aria-label={t("Tester un rappel", "Test a reminder")}
+            >
+              💊
+            </button>
+          )}
+
+          {phase === "session" && (
+            <button
+              onClick={() => closeRealtimeSessionRef.current()}
+              className="px-4 h-12 rounded-full bg-purple-500/40 text-white text-sm border border-purple-300/40"
+            >
+              {t("Terminer", "End")}
+            </button>
+          )}
+
+          {/* Hang up / exit */}
+          <button
+            onClick={onExit}
+            className="w-14 h-14 rounded-full bg-red-500 text-white text-2xl flex items-center justify-center active:bg-red-600 shadow-lg"
+            aria-label={t("Quitter", "Exit")}
+          >
+            📞
+          </button>
+        </div>
       </div>
-
-      {/* Session: show "end conversation" button */}
-      {phase === "session" && (
-        <button
-          onClick={() => closeRealtimeSessionRef.current()}
-          className="mt-1 px-5 py-2 rounded-xl bg-purple-500/30 text-white border border-purple-400/40 text-sm"
-        >
-          {t("Terminer la conversation", "End conversation")}
-        </button>
-      )}
-
-      {/* Passive: show test reminder button */}
-      {phase === "passive" && (
-        <button
-          onClick={async () => {
-            try {
-              const { reminderId } = await createTestReminder();
-              announcedRef.current.clear();
-              const due: DueReminder[] = [
-                { id: reminderId, medicationName: "test", scheduledAt: new Date().toISOString() },
-              ];
-              await handleReminderRef.current(due[0]);
-            } catch (e: any) {
-              setError(e?.message ?? t("Erreur test rappel", "Test reminder error"));
-              setTimeout(() => setError(""), 4_000);
-            }
-          }}
-          className="mt-1 px-4 py-2 rounded-xl bg-white/10 text-white/60 text-sm border border-white/20"
-        >
-          💊 {t("Tester un rappel", "Test a reminder")}
-        </button>
-      )}
-
-      <button onClick={onExit} className="mt-2 text-white/55 underline text-base">
-        {t("Quitter", "Exit")}
-      </button>
     </div>
+  );
+}
+
+/** Local self-view of the user's camera — never sent anywhere; pure illusion. */
+function SelfView() {
+  const ref = useRef<HTMLVideoElement>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let stream: MediaStream | null = null;
+    navigator.mediaDevices
+      .getUserMedia({ video: { facingMode: "user" }, audio: false })
+      .then((s) => {
+        stream = s;
+        if (ref.current) {
+          ref.current.srcObject = s;
+          ref.current.play().catch(() => undefined);
+        }
+      })
+      .catch(() => setFailed(true));
+    return () => {
+      stream?.getTracks().forEach((tr) => tr.stop());
+    };
+  }, []);
+
+  if (failed) return null;
+  return (
+    <video
+      ref={ref}
+      muted
+      playsInline
+      className="w-24 h-32 object-cover rounded-2xl border-2 border-white/50 shadow-xl bg-black"
+      style={{ transform: "scaleX(-1)" }}
+    />
   );
 }
 
@@ -1041,12 +1086,14 @@ function SettingsPanel({
   residents,
   residentId,
   videoFx,
+  cameraOn,
   onResidentChange,
   onVoice,
   onEagerness,
   onNoiseRed,
   onWakeEngine,
   onVideoFx,
+  onCameraOn,
   onClose,
 }: {
   t: (fr: string, en: string) => string;
@@ -1057,12 +1104,14 @@ function SettingsPanel({
   residents?: { id: string; firstName: string; preferredName?: string }[];
   residentId: string;
   videoFx: boolean;
+  cameraOn: boolean;
   onResidentChange?: (id: string) => void;
   onVoice: (v: string) => void;
   onEagerness: (e: "low" | "medium" | "high") => void;
   onNoiseRed: (n: "far_field" | "near_field" | "off") => void;
   onWakeEngine: (e: "web" | "picovoice") => void;
   onVideoFx: (v: boolean) => void;
+  onCameraOn: (v: boolean) => void;
   onClose: () => void;
 }) {
   return (
@@ -1214,6 +1263,29 @@ function SettingsPanel({
         {t(
           "Petits gels d'image et grésillements, comme un appel vidéo qui lague.",
           "Small freezes and glitches, like a laggy video call.",
+        )}
+      </p>
+
+      {/* Self-view camera */}
+      <label className="flex items-center justify-between mt-5">
+        <span className="text-white/80 text-sm font-medium">
+          {t("Ma caméra (vignette)", "My camera (self-view)")}
+        </span>
+        <button
+          onClick={() => onCameraOn(!cameraOn)}
+          className={`px-4 py-2 rounded-xl text-sm border ${
+            cameraOn
+              ? "bg-green-500 text-white border-green-400"
+              : "bg-white/10 text-white/70 border-white/20"
+          }`}
+        >
+          {cameraOn ? t("Activée", "On") : t("Désactivée", "Off")}
+        </button>
+      </label>
+      <p className="text-white/50 text-xs mt-2 leading-relaxed">
+        {t(
+          "Affiche votre caméra dans un coin, comme un appel WhatsApp. 100% local — jamais envoyée.",
+          "Shows your camera in a corner, like a WhatsApp call. 100% local — never sent.",
         )}
       </p>
 
