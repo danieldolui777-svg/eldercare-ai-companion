@@ -1,11 +1,12 @@
 "use client";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams } from "next/navigation";
 import {
   getResident, getMedications, getSchedules, getReminders, getAlertsForResident,
   createMedication, createSchedule, createReminderEvent, confirmReminder,
   updateResident, getMemory, deleteMemory,
   createDeviceToken, getDevices, revokeDevice,
+  scanPrescription, type PrescriptionDraft,
 } from "@/lib/api";
 import { Badge } from "@/components/Badge";
 import { Modal } from "@/components/Modal";
@@ -30,6 +31,11 @@ export default function ResidentPage() {
   const [newToken, setNewToken] = useState<string>("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+
+  // Prescription scan
+  const [scanBusy, setScanBusy] = useState(false);
+  const [draft, setDraft] = useState<PrescriptionDraft | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
     const [r, m, s, rem, al, mem] = await Promise.all([
@@ -61,6 +67,58 @@ export default function ResidentPage() {
       await load();
     } catch (err: any) { setError(err.message); }
     finally { setSaving(false); }
+  }
+
+  // ---- Prescription scan → editable draft → confirm into the DB ----
+  async function onScanFile(file: File) {
+    setScanBusy(true); setError("");
+    try {
+      const imageBase64 = await fileToBase64(file);
+      const d = await scanPrescription({
+        residentId: id, imageBase64, mimeType: file.type || "image/jpeg", language: "fr",
+      });
+      setDraft(d);
+    } catch (err: any) {
+      setError(err.message ?? "Échec du scan");
+    } finally {
+      setScanBusy(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+  function editDraftMed(i: number, patch: any) {
+    setDraft((d) => d && ({ ...d, medications: d.medications.map((m, k) => k === i ? { ...m, ...patch } : m) }));
+  }
+  function removeDraftMed(i: number) {
+    setDraft((d) => d && ({ ...d, medications: d.medications.filter((_, k) => k !== i) }));
+  }
+  async function confirmDraft() {
+    if (!draft) return;
+    setSaving(true); setError("");
+    try {
+      for (const m of draft.medications) {
+        if (!m.name?.trim()) continue;
+        const med = await createMedication({
+          residentId: id,
+          name: m.name.trim(),
+          dosageLabel: m.dosage ?? "",
+          instructionsLabel: m.instructions ?? "",
+          prescribingSourceLabel: m.prescriber ?? "Ordonnance (scan)",
+          active: true,
+        });
+        for (const time of (m.times ?? [])) {
+          await createSchedule({
+            medicationId: med.id, residentId: id, timeOfDay: time,
+            recurrenceRule: "FREQ=DAILY", startDate: new Date().toISOString().slice(0, 10), active: true,
+          });
+        }
+      }
+      setDraft(null);
+      await load();
+    } catch (err: any) {
+      setError(err.message ?? "Échec de l'enregistrement");
+    } finally {
+      setSaving(false);
+    }
   }
 
   // ---- Create schedule ----
@@ -269,6 +327,21 @@ export default function ResidentPage() {
           <div className="flex items-center justify-between mb-3">
             <p className="text-sm text-gray-500">{meds.length} medicament(s)</p>
             <div className="flex gap-2">
+              <input
+                ref={fileRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) onScanFile(f); }}
+              />
+              <button
+                onClick={() => fileRef.current?.click()}
+                disabled={scanBusy}
+                className="text-sm px-3 py-1.5 rounded-lg border border-purple-300 text-purple-700 hover:bg-purple-50 disabled:opacity-50"
+              >
+                {scanBusy ? "Lecture…" : "📷 Scanner une ordonnance"}
+              </button>
               {meds.length > 0 && (
                 <button onClick={() => { setError(""); setShowSchedForm(true); }} className="text-sm px-3 py-1.5 rounded-lg border border-gray-300 hover:bg-gray-50">
                   + Schedule
@@ -549,8 +622,68 @@ export default function ResidentPage() {
           </div>
         </Modal>
       )}
+      {/* Modal: prescription scan review (AI draft — caregiver confirms) */}
+      {draft && (
+        <Modal title="Ordonnance scannée — à vérifier" onClose={() => setDraft(null)}>
+          <div className="flex flex-col gap-4">
+            <div className={`text-xs rounded-lg px-3 py-2 ${
+              draft.confidence === "high" ? "bg-green-50 text-green-700"
+              : draft.confidence === "medium" ? "bg-amber-50 text-amber-700"
+              : "bg-red-50 text-red-700"
+            }`}>
+              Fiabilité de lecture : <strong>{draft.confidence}</strong>. ⚠️ L&apos;IA propose,
+              vous validez. Vérifiez chaque ligne avant d&apos;enregistrer.
+              {draft.notes && <div className="mt-1 italic">Note : {draft.notes}</div>}
+            </div>
+
+            {draft.medications.length === 0 ? (
+              <p className="text-sm text-gray-500">Aucun médicament lisible détecté. Réessayez avec une photo plus nette.</p>
+            ) : (
+              draft.medications.map((m, i) => (
+                <div key={i} className="border border-gray-200 rounded-lg p-3 flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <input
+                      className={inputCls}
+                      value={m.name}
+                      onChange={(e) => editDraftMed(i, { name: e.target.value })}
+                      placeholder="Nom du médicament"
+                    />
+                    <button onClick={() => removeDraftMed(i)} className="ml-2 text-red-500 text-xs px-2">✕</button>
+                  </div>
+                  <div className="flex gap-2">
+                    <input className={inputCls} value={m.dosage ?? ""} onChange={(e) => editDraftMed(i, { dosage: e.target.value })} placeholder="Dosage (ex: 500 mg)" />
+                    <input className={inputCls} value={(m.times ?? []).join(", ")} onChange={(e) => editDraftMed(i, { times: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })} placeholder="Heures (08:00, 20:00)" />
+                  </div>
+                  <input className={inputCls} value={m.instructions ?? ""} onChange={(e) => editDraftMed(i, { instructions: e.target.value })} placeholder="Instructions (ex: 1 comprimé matin et soir)" />
+                </div>
+              ))
+            )}
+
+            {error && <p className="text-sm text-red-600">{error}</p>}
+            <div className="flex gap-2 justify-end pt-2">
+              <button type="button" onClick={() => setDraft(null)} className="text-sm px-4 py-2 rounded-lg border hover:bg-gray-50">Annuler</button>
+              <button
+                onClick={confirmDraft}
+                disabled={saving || draft.medications.length === 0}
+                className="text-sm px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {saving ? "Enregistrement…" : "Confirmer et enregistrer"}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
+}
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve((reader.result as string).split(",")[1] ?? "");
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 }
 
 const GENDER_LABELS: Record<string, string> = {

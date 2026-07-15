@@ -182,3 +182,11 @@ export {
   type WebSearchResult,
   type WebSearchSource,
 } from "./openai/web-search";
+export {
+  OpenAiPrescriptionScanner,
+  type PrescriptionScanner,
+  type PrescriptionScanInput,
+  type PrescriptionDraft,
+  type PrescribedMedication,
+  type OpenAiVisionOptions,
+} from "./openai/vision";

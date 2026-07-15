@@ -90,6 +90,29 @@ export const getMedications = (residentId: string) =>
 export const createMedication = (data: any) =>
   req<any>("/medications", { method: "POST", body: JSON.stringify(data) });
 
+// ---- Prescription scan (returns a DRAFT to review; writes nothing) ----
+export interface PrescriptionDraft {
+  medications: Array<{
+    name: string;
+    dosage?: string;
+    instructions?: string;
+    times?: string[];
+    prescriber?: string;
+  }>;
+  confidence: "high" | "medium" | "low";
+  notes?: string;
+}
+export const scanPrescription = (data: {
+  residentId?: string;
+  imageBase64: string;
+  mimeType: string;
+  language?: "fr" | "en";
+}) =>
+  req<PrescriptionDraft>("/prescriptions/scan", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+
 // ---- Schedules ----
 export const getSchedules = (residentId: string) =>
   req<any[]>(`/residents/${residentId}/schedules`);

@@ -13,6 +13,7 @@ import { RealtimeModule } from "./realtime/realtime.module";
 import { MemoryModule } from "./memory/memory.module";
 import { AuthModule } from "./auth/auth.module";
 import { DeviceModule } from "./device/device.module";
+import { PrescriptionModule } from "./prescription/prescription.module";
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { DeviceModule } from "./device/device.module";
     VoiceModule,
     RealtimeModule,
     MemoryModule,
+    PrescriptionModule,
   ],
 })
 export class AppModule {}
