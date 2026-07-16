@@ -239,13 +239,41 @@ export function AlwaysOn({
     await new Promise((r) => setTimeout(r, notes.length * 220 + 250));
   }, []);
 
+  /** Short DESCENDING chime — "the conversation is over, I'm back on standby".
+   *  Deliberately the mirror of the ascending reminder jingle, so the two are
+   *  never confused. */
+  const playEndChime = useCallback(async () => {
+    const ctx = ctxRef.current;
+    if (!ctx) return;
+    if (ctx.state !== "running") await ctx.resume();
+    const notes = [659.25, 523.25]; // E5 → C5
+    let t0 = ctx.currentTime + 0.02;
+    for (const freq of notes) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, t0);
+      gain.gain.exponentialRampToValueAtTime(0.16, t0 + 0.03);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.28);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(t0);
+      osc.stop(t0 + 0.32);
+      t0 += 0.18;
+    }
+  }, []);
+
+  // Ref so callbacks can play the chime without taking it as a dependency.
+  const playEndChimeRef = useRef(playEndChime);
+  useEffect(() => { playEndChimeRef.current = playEndChime; }, [playEndChime]);
+
   // ── Realtime session ──────────────────────────────────────────────────────────
 
-  const closeRealtimeSessionRef = useRef<() => void>(() => {});
+  const closeRealtimeSessionRef = useRef<(opts?: { silent?: boolean }) => void>(() => {});
   // Filled in after startRecognition is defined (avoids forward-reference issue)
   const restartRecognitionRef = useRef<() => void>(() => {});
 
-  const closeRealtimeSession = useCallback(() => {
+  const closeRealtimeSession = useCallback((opts?: { silent?: boolean }) => {
     clearTimeout(sessionTimerRef.current!);
     workletNodeRef.current?.disconnect();
     workletNodeRef.current = null;
@@ -257,11 +285,14 @@ export function AlwaysOn({
     stopCurrentAudio();
     if (phaseRef.current === "session") {
       setPhaseSync("passive");
+      // Audible cue that we're back on standby (skipped when a medication
+      // reminder is interrupting — its jingle plays instead).
+      if (!opts?.silent) void playEndChime();
       // Restart Speech API — getUserMedia can kill it on mobile.
       // Give the mic time to release before trying to restart.
       setTimeout(() => restartRecognitionRef.current(), 600);
     }
-  }, [setPhaseSync, stopCurrentAudio]);
+  }, [setPhaseSync, stopCurrentAudio, playEndChime]);
 
   useEffect(() => {
     closeRealtimeSessionRef.current = closeRealtimeSession;
@@ -489,6 +520,7 @@ export function AlwaysOn({
       conversingRef.current = false;
       setPhaseSync("passive");
       setWakeLabel("");
+      void playEndChimeRef.current(); // tell them we stopped listening
     }, CONFIRM_TIMEOUT);
   }, [setPhaseSync, t]);
 
@@ -549,8 +581,9 @@ export function AlwaysOn({
 
   const handleReminder = useCallback(
     async (reminder: DueReminder) => {
-      // Interrupt any ongoing session or audio
-      closeRealtimeSessionRef.current();
+      // Interrupt any ongoing session or audio. Silent: the reminder jingle
+      // plays right after — an end chime here would be confusing.
+      closeRealtimeSessionRef.current({ silent: true });
       stopCurrentAudio();
       clearTimeout(activatedTimerRef.current!);
       announcedRef.current.add(reminder.id);
@@ -626,6 +659,7 @@ export function AlwaysOn({
           conversingRef.current = false;
           setPhaseSync("passive");
           setWakeLabel("");
+          void playEndChimeRef.current();
           return;
         }
         if (text.trim().length > 1) {
