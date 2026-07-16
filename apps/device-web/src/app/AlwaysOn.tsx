@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CharacterAvatar, type CharacterState } from "./CharacterAvatar";
+import { isClosing } from "@/lib/closing";
 import {
   chat as apiChat,
   announce,
@@ -68,6 +69,13 @@ export function AlwaysOn({
   const [videoFx, setVideoFx] = useState(true);
   // Optional self-view: show the user's own camera (local only, never sent).
   const [cameraOn, setCameraOn] = useState(false);
+  // End the conversation when the person just acknowledges ("merci", "ok"…),
+  // instead of looping forever. On by default.
+  const [autoEnd, setAutoEnd] = useState(true);
+  const autoEndRef = useRef(autoEnd);
+  useEffect(() => { autoEndRef.current = autoEnd; }, [autoEnd]);
+  // Set when the resident's last utterance was a closing → hang up after the reply.
+  const closingRef = useRef(false);
   // Mirrored in refs so the WebSocket-building callback reads the latest value
   const voiceRef = useRef(voice);
   const eagernessRef = useRef(eagerness);
@@ -395,6 +403,10 @@ export function AlwaysOn({
 
           case "transcript":
             setLastUser(msg.text as string);
+            // Was that just "merci" / "ok" ? Then let the AI say its short closer
+            // and hang up after it — don't loop forever.
+            closingRef.current =
+              autoEndRef.current && isClosing(msg.text as string);
             // Accumulate the conversation so it survives an interruption (e.g. a
             // medication reminder) and the follow-up chat still has the context.
             historyRef.current = [
@@ -416,6 +428,16 @@ export function AlwaysOn({
             aiPlayingRef.current = false;
             setAiSpeaking(false);
             resetSessionTimer();
+            // The person was closing ("merci") — let the short closer finish
+            // playing, then hang up instead of inviting another turn.
+            if (closingRef.current) {
+              closingRef.current = false;
+              const ctx = ctxRef.current;
+              const remainMs = ctx
+                ? Math.max(0, (nextPlayTimeRef.current - ctx.currentTime) * 1000)
+                : 0;
+              setTimeout(() => closeRealtimeSessionRef.current(), remainMs + 700);
+            }
             break;
 
           case "error":
@@ -598,6 +620,14 @@ export function AlwaysOn({
       if (current === "confirming") {
         clearTimeout(confirmTimerRef.current!);
         pendingReminderRef.current = null;
+        // Just an acknowledgement ("merci", "ok") → end here. No API call at all:
+        // instant, free, and it breaks the endless politeness ping-pong.
+        if (autoEndRef.current && isClosing(text)) {
+          conversingRef.current = false;
+          setPhaseSync("passive");
+          setWakeLabel("");
+          return;
+        }
         if (text.trim().length > 1) {
           void sendQueryFallbackRef.current(text.trim());
         } else {
@@ -939,6 +969,8 @@ export function AlwaysOn({
           residentId={residentId}
           videoFx={videoFx}
           cameraOn={cameraOn}
+          autoEnd={autoEnd}
+          onAutoEnd={setAutoEnd}
           onResidentChange={onResidentChange}
           onVoice={setVoice}
           onEagerness={setEagerness}
@@ -1087,6 +1119,8 @@ function SettingsPanel({
   residentId,
   videoFx,
   cameraOn,
+  autoEnd,
+  onAutoEnd,
   onResidentChange,
   onVoice,
   onEagerness,
@@ -1105,6 +1139,8 @@ function SettingsPanel({
   residentId: string;
   videoFx: boolean;
   cameraOn: boolean;
+  autoEnd: boolean;
+  onAutoEnd: (v: boolean) => void;
   onResidentChange?: (id: string) => void;
   onVoice: (v: string) => void;
   onEagerness: (e: "low" | "medium" | "high") => void;
@@ -1140,6 +1176,29 @@ function SettingsPanel({
           </select>
         </>
       )}
+
+      {/* Auto-end on "merci" / "ok" */}
+      <label className="flex items-center justify-between mt-2">
+        <span className="text-white/80 text-sm font-medium">
+          {t("Terminer sur « merci »", 'End on "thanks"')}
+        </span>
+        <button
+          onClick={() => onAutoEnd(!autoEnd)}
+          className={`px-4 py-2 rounded-xl text-sm border ${
+            autoEnd
+              ? "bg-green-500 text-white border-green-400"
+              : "bg-white/10 text-white/70 border-white/20"
+          }`}
+        >
+          {autoEnd ? t("Activé", "On") : t("Désactivé", "Off")}
+        </button>
+      </label>
+      <p className="text-white/50 text-xs mt-2 mb-2 leading-relaxed">
+        {t(
+          "Quand la personne dit juste « merci » ou « ok », la conversation se termine au lieu de repartir en boucle.",
+          'When the person just says "thanks" or "ok", the conversation ends instead of looping.',
+        )}
+      </p>
 
       {/* Wake-word engine */}
       <label className="text-white/80 text-sm font-medium mt-2">
