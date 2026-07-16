@@ -155,6 +155,7 @@ export class VoiceService {
         residentFirstName: resident?.preferredName ?? resident?.firstName,
         dueReminders,
         currentDate: formatToday(language),
+        companionName: process.env.COMPANION_NAME ?? "Daniel",
       },
     );
 
@@ -244,6 +245,7 @@ export class VoiceService {
         dueReminders,
         memoryFacts,
         currentDate: formatToday(language),
+        companionName: process.env.COMPANION_NAME ?? "Daniel",
         gender: (resident?.gender as any) ?? undefined,
         familyContact: resident
           ? {

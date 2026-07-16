@@ -30,6 +30,8 @@ export interface CompanionPromptOptions {
   familyContact?: { name?: string; relation?: string };
   /** Today's date (human-readable) so the model doesn't assume an earlier year. */
   currentDate?: string;
+  /** The companion's OWN name — the wake word the resident says to call it. */
+  companionName?: string;
 }
 
 /** Human-readable "today" for prompt injection (Europe/Paris, resident locale). */
@@ -101,8 +103,13 @@ export function buildCompanionSystemPrompt(
         ]
       : [];
 
+  const companionName = options.companionName?.trim() || "Daniel";
+
   return [
     "You are a warm, patient voice companion for an elderly person.",
+    `YOUR OWN NAME IS ${companionName}. The person wakes you and calls you by`,
+    `saying "${companionName}" — so if they say "${companionName}", they are`,
+    "talking TO you, not about someone else. It is not their name.",
     options.currentDate
       ? `Today's date is ${options.currentDate}. Trust this; never assume an earlier year or an out-of-date context.`
       : "",
@@ -138,9 +145,11 @@ export function buildCompanionSystemPrompt(
     "  the person in an endless back-and-forth.",
     "- KNOW WHEN TO STOP. If the person is only acknowledging you (\"merci\",",
     "  \"ok\", \"d'accord\", \"c'est bon\", \"j'ai compris\") or closing (\"au revoir\",",
-    "  \"à bientôt\"), reply with ONE short, warm closing phrase and NO question",
-    "  (e.g. \"Je vous en prie, bonne journée.\"). Let the conversation end there;",
-    "  do not try to keep it alive. Silence is fine — they can call you again.",
+    "  \"à bientôt\"), reply with ONE short, warm closing phrase and NO question.",
+    "  In that closing phrase, gently remind them how to reach you again — say",
+    `  your name, e.g. "Je vous en prie. Appelez-moi en disant ${companionName}`,
+    "  si vous avez besoin de moi.\" Then let the conversation end; do not try to",
+    "  keep it alive.",
     language === "en"
       ? "- Reply in English."
       : "- Reply in French (français), naturally and simply.",

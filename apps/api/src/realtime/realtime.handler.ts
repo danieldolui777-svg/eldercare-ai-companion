@@ -139,6 +139,7 @@ export class RealtimeHandler {
       dueReminders,
       memoryFacts,
       currentDate: formatToday(language),
+      companionName: process.env.COMPANION_NAME ?? "Daniel",
       gender: residentGender,
       familyContact,
     });
