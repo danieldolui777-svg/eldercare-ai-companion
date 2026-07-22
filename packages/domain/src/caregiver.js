@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.UpdateCaregiverSchema = exports.CreateCaregiverSchema = exports.CaregiverSchema = exports.NotificationPreferencesSchema = exports.CaregiverRoleSchema = void 0;
+exports.SetPasswordSchema = exports.CreateCaregiverAccountSchema = exports.PasswordSchema = exports.UpdateCaregiverSchema = exports.CreateCaregiverSchema = exports.CaregiverSchema = exports.NotificationPreferencesSchema = exports.CaregiverRoleSchema = void 0;
 const zod_1 = require("zod");
 exports.CaregiverRoleSchema = zod_1.z.enum([
     "family",
@@ -30,4 +30,21 @@ exports.CreateCaregiverSchema = exports.CaregiverSchema.omit({
     updatedAt: true,
 });
 exports.UpdateCaregiverSchema = exports.CreateCaregiverSchema.partial();
+/** Minimum length for any caregiver password, shared by create and reset. */
+exports.PasswordSchema = zod_1.z
+    .string()
+    .min(8, "Password must be at least 8 characters");
+/**
+ * Creating a login-capable account. Distinct from CreateCaregiverSchema, which
+ * deliberately has no password field — a caregiver created through that path
+ * exists as a contact but can never sign in.
+ */
+exports.CreateCaregiverAccountSchema = zod_1.z.object({
+    name: zod_1.z.string().min(1),
+    email: zod_1.z.string().email(),
+    role: exports.CaregiverRoleSchema,
+    phone: zod_1.z.string().optional(),
+    password: exports.PasswordSchema,
+});
+exports.SetPasswordSchema = zod_1.z.object({ password: exports.PasswordSchema });
 //# sourceMappingURL=caregiver.js.map

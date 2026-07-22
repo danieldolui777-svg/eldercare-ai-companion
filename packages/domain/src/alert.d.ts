@@ -14,24 +14,24 @@ export declare const AlertSchema: z.ZodObject<{
     acknowledgedAt: z.ZodOptional<z.ZodDate>;
     resolvedAt: z.ZodOptional<z.ZodDate>;
 }, "strip", z.ZodTypeAny, {
-    message: string;
-    type: "missed_medication" | "medication_uncertainty" | "emergency_phrase" | "wellbeing_concern" | "device_offline" | "other";
-    status: "created" | "sent" | "acknowledged" | "resolved" | "failed";
     id: string;
-    createdAt: Date;
     residentId: string;
+    type: "missed_medication" | "medication_uncertainty" | "emergency_phrase" | "wellbeing_concern" | "device_offline" | "other";
     severity: "low" | "medium" | "high" | "critical";
+    status: "created" | "sent" | "acknowledged" | "resolved" | "failed";
+    message: string;
+    createdAt: Date;
     assignedToCaregiverId?: string | undefined;
     acknowledgedAt?: Date | undefined;
     resolvedAt?: Date | undefined;
 }, {
-    message: string;
-    type: "missed_medication" | "medication_uncertainty" | "emergency_phrase" | "wellbeing_concern" | "device_offline" | "other";
-    status: "created" | "sent" | "acknowledged" | "resolved" | "failed";
     id: string;
-    createdAt: Date;
     residentId: string;
+    type: "missed_medication" | "medication_uncertainty" | "emergency_phrase" | "wellbeing_concern" | "device_offline" | "other";
     severity: "low" | "medium" | "high" | "critical";
+    status: "created" | "sent" | "acknowledged" | "resolved" | "failed";
+    message: string;
+    createdAt: Date;
     assignedToCaregiverId?: string | undefined;
     acknowledgedAt?: Date | undefined;
     resolvedAt?: Date | undefined;
@@ -47,17 +47,17 @@ export declare const CreateAlertSchema: z.ZodObject<Omit<{
     createdAt: z.ZodDate;
     acknowledgedAt: z.ZodOptional<z.ZodDate>;
     resolvedAt: z.ZodOptional<z.ZodDate>;
-}, "status" | "id" | "createdAt" | "acknowledgedAt" | "resolvedAt">, "strip", z.ZodTypeAny, {
-    message: string;
-    type: "missed_medication" | "medication_uncertainty" | "emergency_phrase" | "wellbeing_concern" | "device_offline" | "other";
+}, "id" | "status" | "createdAt" | "acknowledgedAt" | "resolvedAt">, "strip", z.ZodTypeAny, {
     residentId: string;
+    type: "missed_medication" | "medication_uncertainty" | "emergency_phrase" | "wellbeing_concern" | "device_offline" | "other";
     severity: "low" | "medium" | "high" | "critical";
+    message: string;
     assignedToCaregiverId?: string | undefined;
 }, {
-    message: string;
-    type: "missed_medication" | "medication_uncertainty" | "emergency_phrase" | "wellbeing_concern" | "device_offline" | "other";
     residentId: string;
+    type: "missed_medication" | "medication_uncertainty" | "emergency_phrase" | "wellbeing_concern" | "device_offline" | "other";
     severity: "low" | "medium" | "high" | "critical";
+    message: string;
     assignedToCaregiverId?: string | undefined;
 }>;
 export type AlertType = z.infer<typeof AlertTypeSchema>;

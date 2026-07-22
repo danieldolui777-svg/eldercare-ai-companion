@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.UpdateResidentSchema = exports.CreateResidentSchema = exports.ResidentSchema = exports.PrivacySettingsSchema = exports.ConsentStatusSchema = void 0;
+exports.UpdateResidentSchema = exports.CreateResidentSchema = exports.ResidentSchema = exports.PrivacySettingsSchema = exports.GenderSchema = exports.ConsentStatusSchema = void 0;
 const zod_1 = require("zod");
 exports.ConsentStatusSchema = zod_1.z.enum([
     "pending",
@@ -8,9 +8,17 @@ exports.ConsentStatusSchema = zod_1.z.enum([
     "revoked",
     "guardian_granted",
 ]);
+exports.GenderSchema = zod_1.z.enum([
+    "female",
+    "male",
+    "other",
+    "unspecified",
+]);
 exports.PrivacySettingsSchema = zod_1.z.object({
     storeAudio: zod_1.z.boolean().default(false),
     storeTranscripts: zod_1.z.boolean().default(false),
+    // Curated, non-medical companion memory. On by default; opt out to disable.
+    storeMemory: zod_1.z.boolean().default(true),
     shareDataWithFamily: zod_1.z.boolean().default(true),
     allowAiConversation: zod_1.z.boolean().default(true),
 });
@@ -19,6 +27,9 @@ exports.ResidentSchema = zod_1.z.object({
     firstName: zod_1.z.string().min(1),
     preferredName: zod_1.z.string().optional(),
     dateOfBirth: zod_1.z.coerce.date(),
+    gender: exports.GenderSchema.optional(),
+    familyContactName: zod_1.z.string().optional(),
+    familyContactRelation: zod_1.z.string().optional(),
     language: zod_1.z.string().default("fr"),
     voicePreferences: zod_1.z.record(zod_1.z.unknown()).default({}),
     consentStatus: exports.ConsentStatusSchema,

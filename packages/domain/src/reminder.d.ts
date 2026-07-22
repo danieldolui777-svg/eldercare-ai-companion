@@ -13,22 +13,22 @@ export declare const ReminderEventSchema: z.ZodObject<{
     createdAt: z.ZodDate;
     updatedAt: z.ZodDate;
 }, "strip", z.ZodTypeAny, {
-    status: "scheduled" | "delivered" | "confirmed_taken" | "confirmed_not_taken" | "unknown" | "missed" | "escalated";
     id: string;
+    residentId: string;
+    status: "scheduled" | "delivered" | "confirmed_taken" | "confirmed_not_taken" | "unknown" | "missed" | "escalated";
     createdAt: Date;
     updatedAt: Date;
-    residentId: string;
     medicationScheduleId: string;
     scheduledAt: Date;
     deliveredAt?: Date | undefined;
     confirmationSource?: "caregiver" | "voice" | "dashboard" | "manual" | undefined;
     transcriptSnippet?: string | undefined;
 }, {
-    status: "scheduled" | "delivered" | "confirmed_taken" | "confirmed_not_taken" | "unknown" | "missed" | "escalated";
     id: string;
+    residentId: string;
+    status: "scheduled" | "delivered" | "confirmed_taken" | "confirmed_not_taken" | "unknown" | "missed" | "escalated";
     createdAt: Date;
     updatedAt: Date;
-    residentId: string;
     medicationScheduleId: string;
     scheduledAt: Date;
     deliveredAt?: Date | undefined;

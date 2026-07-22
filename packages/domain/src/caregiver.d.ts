@@ -43,7 +43,6 @@ export declare const CaregiverSchema: z.ZodObject<{
 }, "strip", z.ZodTypeAny, {
     id: string;
     createdAt: Date;
-    updatedAt: Date;
     email: string;
     name: string;
     role: "family" | "nurse" | "facility_staff" | "admin";
@@ -53,11 +52,11 @@ export declare const CaregiverSchema: z.ZodObject<{
         email: boolean;
         minSeverityForSms: "low" | "medium" | "high" | "critical";
     };
+    updatedAt: Date;
     phone?: string | undefined;
 }, {
     id: string;
     createdAt: Date;
-    updatedAt: Date;
     email: string;
     name: string;
     role: "family" | "nurse" | "facility_staff" | "admin";
@@ -67,6 +66,7 @@ export declare const CaregiverSchema: z.ZodObject<{
         email?: boolean | undefined;
         minSeverityForSms?: "low" | "medium" | "high" | "critical" | undefined;
     };
+    updatedAt: Date;
     phone?: string | undefined;
 }>;
 export declare const CreateCaregiverSchema: z.ZodObject<Omit<{
@@ -160,9 +160,43 @@ export declare const UpdateCaregiverSchema: z.ZodObject<{
         minSeverityForSms?: "low" | "medium" | "high" | "critical" | undefined;
     } | undefined;
 }>;
+/** Minimum length for any caregiver password, shared by create and reset. */
+export declare const PasswordSchema: z.ZodString;
+/**
+ * Creating a login-capable account. Distinct from CreateCaregiverSchema, which
+ * deliberately has no password field — a caregiver created through that path
+ * exists as a contact but can never sign in.
+ */
+export declare const CreateCaregiverAccountSchema: z.ZodObject<{
+    name: z.ZodString;
+    email: z.ZodString;
+    role: z.ZodEnum<["family", "nurse", "facility_staff", "admin"]>;
+    phone: z.ZodOptional<z.ZodString>;
+    password: z.ZodString;
+}, "strip", z.ZodTypeAny, {
+    email: string;
+    name: string;
+    role: "family" | "nurse" | "facility_staff" | "admin";
+    password: string;
+    phone?: string | undefined;
+}, {
+    email: string;
+    name: string;
+    role: "family" | "nurse" | "facility_staff" | "admin";
+    password: string;
+    phone?: string | undefined;
+}>;
+export declare const SetPasswordSchema: z.ZodObject<{
+    password: z.ZodString;
+}, "strip", z.ZodTypeAny, {
+    password: string;
+}, {
+    password: string;
+}>;
 export type CaregiverRole = z.infer<typeof CaregiverRoleSchema>;
 export type NotificationPreferences = z.infer<typeof NotificationPreferencesSchema>;
 export type Caregiver = z.infer<typeof CaregiverSchema>;
 export type CreateCaregiver = z.infer<typeof CreateCaregiverSchema>;
 export type UpdateCaregiver = z.infer<typeof UpdateCaregiverSchema>;
+export type CreateCaregiverAccount = z.infer<typeof CreateCaregiverAccountSchema>;
 //# sourceMappingURL=caregiver.d.ts.map

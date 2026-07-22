@@ -11,20 +11,20 @@ export declare const MedicationSchema: z.ZodObject<{
     updatedAt: z.ZodDate;
 }, "strip", z.ZodTypeAny, {
     id: string;
-    createdAt: Date;
-    updatedAt: Date;
-    name: string;
     residentId: string;
+    createdAt: Date;
+    name: string;
+    updatedAt: Date;
     dosageLabel: string;
     instructionsLabel: string;
     prescribingSourceLabel: string;
     active: boolean;
 }, {
     id: string;
-    createdAt: Date;
-    updatedAt: Date;
-    name: string;
     residentId: string;
+    createdAt: Date;
+    name: string;
+    updatedAt: Date;
     dosageLabel: string;
     instructionsLabel: string;
     prescribingSourceLabel: string;
@@ -41,37 +41,37 @@ export declare const CreateMedicationSchema: z.ZodObject<Omit<{
     createdAt: z.ZodDate;
     updatedAt: z.ZodDate;
 }, "id" | "createdAt" | "updatedAt">, "strip", z.ZodTypeAny, {
-    name: string;
     residentId: string;
+    name: string;
     dosageLabel: string;
     instructionsLabel: string;
     prescribingSourceLabel: string;
     active: boolean;
 }, {
-    name: string;
     residentId: string;
+    name: string;
     dosageLabel: string;
     instructionsLabel: string;
     prescribingSourceLabel: string;
     active?: boolean | undefined;
 }>;
 export declare const UpdateMedicationSchema: z.ZodObject<{
-    name: z.ZodOptional<z.ZodString>;
     residentId: z.ZodOptional<z.ZodString>;
+    name: z.ZodOptional<z.ZodString>;
     dosageLabel: z.ZodOptional<z.ZodString>;
     instructionsLabel: z.ZodOptional<z.ZodString>;
     prescribingSourceLabel: z.ZodOptional<z.ZodString>;
     active: z.ZodOptional<z.ZodDefault<z.ZodBoolean>>;
 }, "strip", z.ZodTypeAny, {
-    name?: string | undefined;
     residentId?: string | undefined;
+    name?: string | undefined;
     dosageLabel?: string | undefined;
     instructionsLabel?: string | undefined;
     prescribingSourceLabel?: string | undefined;
     active?: boolean | undefined;
 }, {
-    name?: string | undefined;
     residentId?: string | undefined;
+    name?: string | undefined;
     dosageLabel?: string | undefined;
     instructionsLabel?: string | undefined;
     prescribingSourceLabel?: string | undefined;
@@ -90,9 +90,9 @@ export declare const MedicationScheduleSchema: z.ZodObject<{
     updatedAt: z.ZodDate;
 }, "strip", z.ZodTypeAny, {
     id: string;
+    residentId: string;
     createdAt: Date;
     updatedAt: Date;
-    residentId: string;
     active: boolean;
     medicationId: string;
     timeOfDay: string;
@@ -101,9 +101,9 @@ export declare const MedicationScheduleSchema: z.ZodObject<{
     endDate?: Date | undefined;
 }, {
     id: string;
+    residentId: string;
     createdAt: Date;
     updatedAt: Date;
-    residentId: string;
     medicationId: string;
     timeOfDay: string;
     recurrenceRule: string;
