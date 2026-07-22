@@ -42,12 +42,23 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 
 // ---- Login / session ----
 export async function login(email: string, password: string) {
-  const res = await fetch(`${BASE}/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
-  });
-  if (!res.ok) throw new Error("Email ou mot de passe incorrect");
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password }),
+    });
+  } catch {
+    // Server unreachable — never blame the credentials for this.
+    throw new Error("Serveur injoignable. Vérifiez que l'API est démarrée.");
+  }
+  // Only a 401 actually means bad credentials; anything else is a server-side
+  // failure (e.g. database down) and must not be reported as a wrong password.
+  if (res.status === 401) throw new Error("Email ou mot de passe incorrect");
+  if (!res.ok) {
+    throw new Error(`Erreur serveur (${res.status}). Réessayez ou vérifiez l'API.`);
+  }
   const data = await res.json();
   setToken(data.accessToken);
   return data.caregiver as { id: string; name: string; role: string; email: string };
@@ -83,6 +94,31 @@ export const deleteMemory = (id: string) =>
 export const getCaregivers = () => req<any[]>("/caregivers");
 export const createCaregiver = (data: any) =>
   req<any>("/caregivers", { method: "POST", body: JSON.stringify(data) });
+
+// ---- User accounts (admin only) ----
+// Distinct from /caregivers, which creates a contact that can NEVER sign in.
+export interface UserAccount {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  phone?: string;
+  canLogIn: boolean;
+  createdAt: string;
+}
+export const getUsers = () => req<UserAccount[]>("/auth/users");
+export const createUser = (data: {
+  name: string;
+  email: string;
+  role: string;
+  phone?: string;
+  password: string;
+}) => req<{ id: string }>("/auth/users", { method: "POST", body: JSON.stringify(data) });
+export const resetUserPassword = (id: string, password: string) =>
+  req<void>(`/auth/users/${id}/password`, {
+    method: "POST",
+    body: JSON.stringify({ password }),
+  });
 
 // ---- Medications ----
 export const getMedications = (residentId: string) =>

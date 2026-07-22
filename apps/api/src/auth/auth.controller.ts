@@ -3,13 +3,20 @@ import {
   Post,
   Get,
   Body,
+  Param,
   HttpCode,
   HttpStatus,
+  UseGuards,
 } from "@nestjs/common";
 import { z } from "zod";
+import {
+  CreateCaregiverAccountSchema,
+  SetPasswordSchema,
+} from "@eldercare/domain";
 import { AuthService } from "./auth.service";
 import { ZodPipe } from "../common/zod.pipe";
 import { Public } from "./public.decorator";
+import { AdminGuard } from "./admin.guard";
 import { CurrentUser, type AuthUser } from "./current-user.decorator";
 
 const LoginSchema = z.object({
@@ -52,5 +59,34 @@ export class AuthController {
   @Get("me")
   me(@CurrentUser() user: AuthUser) {
     return user;
+  }
+
+  // ---- Account management (admin only) ----
+
+  @UseGuards(AdminGuard)
+  @Get("users")
+  listUsers() {
+    return this.auth.listAccounts();
+  }
+
+  @UseGuards(AdminGuard)
+  @Post("users")
+  @HttpCode(HttpStatus.CREATED)
+  createUser(
+    @Body(new ZodPipe(CreateCaregiverAccountSchema)) body: any,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.auth.createAccount(body, user?.sub);
+  }
+
+  @UseGuards(AdminGuard)
+  @Post("users/:id/password")
+  @HttpCode(HttpStatus.NO_CONTENT)
+  resetPassword(
+    @Param("id") id: string,
+    @Body(new ZodPipe(SetPasswordSchema)) body: any,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.auth.setPasswordById(id, body.password, user?.sub);
   }
 }

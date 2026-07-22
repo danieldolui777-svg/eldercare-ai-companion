@@ -6,6 +6,7 @@ import { logout } from "@/components/AuthGate";
 const links = [
   { href: "/", label: "Alertes" },
   { href: "/residents", label: "Residents" },
+  { href: "/users", label: "Utilisateurs" },
 ];
 
 export function Nav() {

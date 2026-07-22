@@ -8,6 +8,7 @@ import { AuthService } from "./auth.service";
 import { AuthController } from "./auth.controller";
 import { JwtAuthGuard } from "./jwt-auth.guard";
 import { AuthGuard } from "./auth.guard";
+import { AdminGuard } from "./admin.guard";
 
 const secret = process.env.JWT_SECRET ?? "";
 if (!secret) {
@@ -31,6 +32,7 @@ if (!secret) {
   providers: [
     AuthService,
     JwtAuthGuard,
+    AdminGuard,
     // Global: every route requires auth unless @Public() / @DeviceRoute().
     { provide: APP_GUARD, useClass: AuthGuard },
   ],

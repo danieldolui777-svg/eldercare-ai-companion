@@ -33,8 +33,29 @@ export const CreateCaregiverSchema = CaregiverSchema.omit({
 
 export const UpdateCaregiverSchema = CreateCaregiverSchema.partial();
 
+/** Minimum length for any caregiver password, shared by create and reset. */
+export const PasswordSchema = z
+  .string()
+  .min(8, "Password must be at least 8 characters");
+
+/**
+ * Creating a login-capable account. Distinct from CreateCaregiverSchema, which
+ * deliberately has no password field — a caregiver created through that path
+ * exists as a contact but can never sign in.
+ */
+export const CreateCaregiverAccountSchema = z.object({
+  name: z.string().min(1),
+  email: z.string().email(),
+  role: CaregiverRoleSchema,
+  phone: z.string().optional(),
+  password: PasswordSchema,
+});
+
+export const SetPasswordSchema = z.object({ password: PasswordSchema });
+
 export type CaregiverRole = z.infer<typeof CaregiverRoleSchema>;
 export type NotificationPreferences = z.infer<typeof NotificationPreferencesSchema>;
 export type Caregiver = z.infer<typeof CaregiverSchema>;
 export type CreateCaregiver = z.infer<typeof CreateCaregiverSchema>;
 export type UpdateCaregiver = z.infer<typeof UpdateCaregiverSchema>;
+export type CreateCaregiverAccount = z.infer<typeof CreateCaregiverAccountSchema>;

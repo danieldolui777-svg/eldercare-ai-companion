@@ -3,9 +3,12 @@ import {
   Logger,
   UnauthorizedException,
   BadRequestException,
+  ConflictException,
+  NotFoundException,
 } from "@nestjs/common";
 import { JwtService } from "@nestjs/jwt";
 import * as bcrypt from "bcryptjs";
+import type { CreateCaregiverAccount } from "@eldercare/domain";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 
@@ -80,6 +83,88 @@ export class AuthService {
       where: { email: email.toLowerCase().trim() },
       data: { passwordHash },
     });
+  }
+
+  /** Caregivers with account metadata. Never exposes passwordHash. */
+  listAccounts() {
+    return this.prisma.caregiver.findMany({
+      orderBy: { createdAt: "asc" },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        phone: true,
+        passwordHash: true,
+        createdAt: true,
+      },
+    }).then((rows) =>
+      rows.map(({ passwordHash, ...rest }) => ({
+        ...rest,
+        // Surfacing only whether sign-in is possible, not the hash itself.
+        canLogIn: Boolean(passwordHash),
+      })),
+    );
+  }
+
+  /**
+   * Create a login-capable caregiver. Unlike bootstrapAdmin this does NOT
+   * upsert: overwriting an existing account's password must be an explicit
+   * reset, never a side effect of a mistyped "create".
+   */
+  async createAccount(
+    input: CreateCaregiverAccount,
+    actorId?: string,
+  ): Promise<{ id: string }> {
+    const email = input.email.toLowerCase().trim();
+    const existing = await this.prisma.caregiver.findUnique({ where: { email } });
+    if (existing) {
+      throw new ConflictException("A caregiver with this email already exists");
+    }
+    const passwordHash = await this.hashPassword(input.password);
+    const caregiver = await this.prisma.caregiver.create({
+      data: {
+        name: input.name,
+        email,
+        role: input.role,
+        phone: input.phone,
+        passwordHash,
+        notificationPreferences: {},
+      },
+    });
+    await this.audit
+      .log({
+        actorType: "caregiver",
+        actorId: actorId ?? "unknown",
+        action: "auth.account_created",
+        entityType: "Caregiver",
+        entityId: caregiver.id,
+      })
+      .catch(() => undefined);
+    return { id: caregiver.id };
+  }
+
+  /** Admin reset of another caregiver's password, by id. */
+  async setPasswordById(
+    id: string,
+    password: string,
+    actorId?: string,
+  ): Promise<void> {
+    const caregiver = await this.prisma.caregiver.findUnique({ where: { id } });
+    if (!caregiver) throw new NotFoundException("Caregiver not found");
+
+    const passwordHash = await this.hashPassword(password);
+    await this.prisma.caregiver.update({ where: { id }, data: { passwordHash } });
+
+    await this.audit
+      .log({
+        actorType: "caregiver",
+        actorId: actorId ?? "unknown",
+        action: "auth.password_reset",
+        entityType: "Caregiver",
+        entityId: id,
+      })
+      .catch(() => undefined);
   }
 
   /**
