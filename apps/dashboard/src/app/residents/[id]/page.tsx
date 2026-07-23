@@ -150,6 +150,7 @@ export default function ResidentPage() {
       gender: resident.gender ?? "",
       familyContactName: resident.familyContactName ?? "",
       familyContactRelation: resident.familyContactRelation ?? "",
+      familyContactPhone: resident.familyContactPhone ?? "",
       storeMemory: p.storeMemory !== false,
       storeTranscripts: p.storeTranscripts === true,
     });
@@ -163,6 +164,7 @@ export default function ResidentPage() {
         gender: profileForm.gender || undefined,
         familyContactName: profileForm.familyContactName || undefined,
         familyContactRelation: profileForm.familyContactRelation || undefined,
+        familyContactPhone: profileForm.familyContactPhone || undefined,
         privacySettings: {
           ...(resident.privacySettings ?? {}),
           storeMemory: profileForm.storeMemory,
@@ -229,10 +231,11 @@ export default function ResidentPage() {
               {resident.gender && ` · ${GENDER_LABELS[resident.gender] ?? resident.gender}`}
               {" · Langue : "}{resident.language}
             </p>
-            {(resident.familyContactName || resident.familyContactRelation) && (
+            {(resident.familyContactName || resident.familyContactRelation || resident.familyContactPhone) && (
               <p className="text-xs text-gray-500 mt-1">
                 Contact famille : {resident.familyContactName}
                 {resident.familyContactRelation && ` (${resident.familyContactRelation})`}
+                {resident.familyContactPhone && ` · ${resident.familyContactPhone}`}
               </p>
             )}
           </div>
@@ -531,6 +534,9 @@ export default function ResidentPage() {
             </FormField>
             <FormField label="Contact famille — lien">
               <input className={inputCls} value={profileForm.familyContactRelation} onChange={(e) => setProfileForm((f: any) => ({ ...f, familyContactRelation: e.target.value }))} placeholder="ex: fils, fille, voisin" />
+            </FormField>
+            <FormField label="Contact famille — téléphone">
+              <input className={inputCls} type="tel" value={profileForm.familyContactPhone} onChange={(e) => setProfileForm((f: any) => ({ ...f, familyContactPhone: e.target.value }))} placeholder="ex: +33612345678" />
             </FormField>
 
             <div className="border-t border-gray-200 pt-3 mt-1">

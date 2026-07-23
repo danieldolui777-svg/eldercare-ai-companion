@@ -28,6 +28,7 @@ export declare const ResidentSchema: z.ZodObject<{
     gender: z.ZodOptional<z.ZodEnum<["female", "male", "other", "unspecified"]>>;
     familyContactName: z.ZodOptional<z.ZodString>;
     familyContactRelation: z.ZodOptional<z.ZodString>;
+    familyContactPhone: z.ZodOptional<z.ZodString>;
     language: z.ZodDefault<z.ZodString>;
     voicePreferences: z.ZodDefault<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
     consentStatus: z.ZodEnum<["pending", "granted", "revoked", "guardian_granted"]>;
@@ -72,6 +73,7 @@ export declare const ResidentSchema: z.ZodObject<{
     gender?: "other" | "female" | "male" | "unspecified" | undefined;
     familyContactName?: string | undefined;
     familyContactRelation?: string | undefined;
+    familyContactPhone?: string | undefined;
 }, {
     id: string;
     createdAt: Date;
@@ -90,6 +92,7 @@ export declare const ResidentSchema: z.ZodObject<{
     gender?: "other" | "female" | "male" | "unspecified" | undefined;
     familyContactName?: string | undefined;
     familyContactRelation?: string | undefined;
+    familyContactPhone?: string | undefined;
     language?: string | undefined;
     voicePreferences?: Record<string, unknown> | undefined;
 }>;
@@ -101,6 +104,7 @@ export declare const CreateResidentSchema: z.ZodObject<Omit<{
     gender: z.ZodOptional<z.ZodEnum<["female", "male", "other", "unspecified"]>>;
     familyContactName: z.ZodOptional<z.ZodString>;
     familyContactRelation: z.ZodOptional<z.ZodString>;
+    familyContactPhone: z.ZodOptional<z.ZodString>;
     language: z.ZodDefault<z.ZodString>;
     voicePreferences: z.ZodDefault<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
     consentStatus: z.ZodEnum<["pending", "granted", "revoked", "guardian_granted"]>;
@@ -142,6 +146,7 @@ export declare const CreateResidentSchema: z.ZodObject<Omit<{
     gender?: "other" | "female" | "male" | "unspecified" | undefined;
     familyContactName?: string | undefined;
     familyContactRelation?: string | undefined;
+    familyContactPhone?: string | undefined;
 }, {
     firstName: string;
     dateOfBirth: Date;
@@ -157,6 +162,7 @@ export declare const CreateResidentSchema: z.ZodObject<Omit<{
     gender?: "other" | "female" | "male" | "unspecified" | undefined;
     familyContactName?: string | undefined;
     familyContactRelation?: string | undefined;
+    familyContactPhone?: string | undefined;
     language?: string | undefined;
     voicePreferences?: Record<string, unknown> | undefined;
 }>;
@@ -167,6 +173,7 @@ export declare const UpdateResidentSchema: z.ZodObject<{
     gender: z.ZodOptional<z.ZodOptional<z.ZodEnum<["female", "male", "other", "unspecified"]>>>;
     familyContactName: z.ZodOptional<z.ZodOptional<z.ZodString>>;
     familyContactRelation: z.ZodOptional<z.ZodOptional<z.ZodString>>;
+    familyContactPhone: z.ZodOptional<z.ZodOptional<z.ZodString>>;
     language: z.ZodOptional<z.ZodDefault<z.ZodString>>;
     voicePreferences: z.ZodOptional<z.ZodDefault<z.ZodRecord<z.ZodString, z.ZodUnknown>>>;
     consentStatus: z.ZodOptional<z.ZodEnum<["pending", "granted", "revoked", "guardian_granted"]>>;
@@ -196,6 +203,7 @@ export declare const UpdateResidentSchema: z.ZodObject<{
     gender?: "other" | "female" | "male" | "unspecified" | undefined;
     familyContactName?: string | undefined;
     familyContactRelation?: string | undefined;
+    familyContactPhone?: string | undefined;
     language?: string | undefined;
     voicePreferences?: Record<string, unknown> | undefined;
     consentStatus?: "pending" | "granted" | "revoked" | "guardian_granted" | undefined;
@@ -213,6 +221,7 @@ export declare const UpdateResidentSchema: z.ZodObject<{
     gender?: "other" | "female" | "male" | "unspecified" | undefined;
     familyContactName?: string | undefined;
     familyContactRelation?: string | undefined;
+    familyContactPhone?: string | undefined;
     language?: string | undefined;
     voicePreferences?: Record<string, unknown> | undefined;
     consentStatus?: "pending" | "granted" | "revoked" | "guardian_granted" | undefined;

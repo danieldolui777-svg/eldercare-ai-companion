@@ -30,6 +30,9 @@ exports.ResidentSchema = zod_1.z.object({
     gender: exports.GenderSchema.optional(),
     familyContactName: zod_1.z.string().optional(),
     familyContactRelation: zod_1.z.string().optional(),
+    // Primary emergency-contact phone. Foundation for the alert cascade
+    // (notify this contact first, before any escalation). E.164 recommended.
+    familyContactPhone: zod_1.z.string().optional(),
     language: zod_1.z.string().default("fr"),
     voicePreferences: zod_1.z.record(zod_1.z.unknown()).default({}),
     consentStatus: exports.ConsentStatusSchema,

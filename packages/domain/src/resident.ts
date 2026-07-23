@@ -31,6 +31,9 @@ export const ResidentSchema = z.object({
   gender: GenderSchema.optional(),
   familyContactName: z.string().optional(),
   familyContactRelation: z.string().optional(),
+  // Primary emergency-contact phone. Foundation for the alert cascade
+  // (notify this contact first, before any escalation). E.164 recommended.
+  familyContactPhone: z.string().optional(),
   language: z.string().default("fr"),
   voicePreferences: z.record(z.unknown()).default({}),
   consentStatus: ConsentStatusSchema,

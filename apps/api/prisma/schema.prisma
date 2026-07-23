@@ -15,6 +15,7 @@ model Resident {
   gender            Gender?
   familyContactName     String?
   familyContactRelation String?
+  familyContactPhone    String?
   language          String   @default("fr")
   voicePreferences  Json     @default("{}")
   consentStatus     ConsentStatus
