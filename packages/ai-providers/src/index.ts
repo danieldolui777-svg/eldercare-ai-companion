@@ -190,3 +190,10 @@ export {
   type PrescribedMedication,
   type OpenAiVisionOptions,
 } from "./openai/vision";
+export {
+  TwilioSmsProvider,
+  createNotificationProvider,
+  type NotificationProvider,
+  type SmsMessage,
+  type SmsResult,
+} from "./notifications/sms";

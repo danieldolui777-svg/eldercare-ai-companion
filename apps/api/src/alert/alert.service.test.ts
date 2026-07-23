@@ -1,5 +1,5 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
-import { AlertService } from "./alert.service";
+import { describe, it, expect, vi } from "vitest";
+import { AlertService, buildAlertSms } from "./alert.service";
 import { NotFoundException } from "@nestjs/common";
 
 function makeAlert(overrides: Partial<any> = {}) {
@@ -18,7 +18,7 @@ function makeAlert(overrides: Partial<any> = {}) {
   };
 }
 
-function makePrisma(alert: any) {
+function makePrisma(alert: any, resident: any = { firstName: "Jeanne", preferredName: null, familyContactPhone: null }) {
   return {
     alert: {
       create: vi.fn().mockResolvedValue(alert),
@@ -28,11 +28,18 @@ function makePrisma(alert: any) {
       ),
       findMany: vi.fn().mockResolvedValue([alert]),
     },
+    resident: {
+      findUnique: vi.fn().mockResolvedValue(resident),
+    },
   };
 }
 
 function makeAudit() {
   return { log: vi.fn().mockResolvedValue(undefined) };
+}
+
+function makeNotifier(result: any = { ok: true, id: "SM123" }) {
+  return { name: "twilio", sendSms: vi.fn().mockResolvedValue(result) };
 }
 
 describe("AlertService.create", () => {
@@ -56,6 +63,120 @@ describe("AlertService.create", () => {
     expect(audit.log).toHaveBeenCalledWith(
       expect.objectContaining({ action: "alert.created", entityId: "alert-1" }),
     );
+  });
+});
+
+describe("AlertService.create — SMS notification", () => {
+  const params = {
+    residentId: "res-1",
+    type: "missed_medication" as const,
+    severity: "high" as const,
+    message: "Resident did not take Doliprane",
+  };
+
+  it("texts the emergency contact when a provider and phone are set", async () => {
+    const prisma = makePrisma(makeAlert(), {
+      firstName: "Jeanne",
+      preferredName: "Jeannette",
+      familyContactPhone: "+33612345678",
+    });
+    const notifier = makeNotifier();
+    const service = new AlertService(prisma as any, makeAudit() as any, notifier as any);
+
+    await service.create(params);
+
+    expect(notifier.sendSms).toHaveBeenCalledTimes(1);
+    const sent = notifier.sendSms.mock.calls[0][0];
+    expect(sent.to).toBe("+33612345678");
+    expect(sent.body).toContain("Jeannette"); // uses preferred name
+    // Data minimisation: the SMS must NOT leak medical specifics.
+    expect(sent.body).not.toContain("Doliprane");
+  });
+
+  it("audits a successful send as alert.notification_sent", async () => {
+    const prisma = makePrisma(makeAlert(), {
+      firstName: "Jeanne",
+      preferredName: null,
+      familyContactPhone: "+33612345678",
+    });
+    const audit = makeAudit();
+    const service = new AlertService(prisma as any, audit as any, makeNotifier() as any);
+
+    await service.create(params);
+
+    expect(audit.log).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "alert.notification_sent" }),
+    );
+  });
+
+  it("does not send when the resident has no emergency-contact phone", async () => {
+    const prisma = makePrisma(makeAlert(), {
+      firstName: "Jeanne",
+      preferredName: null,
+      familyContactPhone: null,
+    });
+    const notifier = makeNotifier();
+    const service = new AlertService(prisma as any, makeAudit() as any, notifier as any);
+
+    const result = await service.create(params);
+
+    expect(notifier.sendSms).not.toHaveBeenCalled();
+    expect(result.status).toBe("created"); // alert still created
+  });
+
+  it("still creates the alert when the SMS send fails", async () => {
+    const prisma = makePrisma(makeAlert(), {
+      firstName: "Jeanne",
+      preferredName: null,
+      familyContactPhone: "+33612345678",
+    });
+    const audit = makeAudit();
+    const notifier = makeNotifier({ ok: false, error: "Twilio 401" });
+    const service = new AlertService(prisma as any, audit as any, notifier as any);
+
+    const result = await service.create(params);
+
+    // The alert survives a failed notification and stays visible (status created).
+    expect(result.status).toBe("created");
+    expect(audit.log).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "alert.notification_failed" }),
+    );
+  });
+
+  it("still creates the alert when the provider throws", async () => {
+    const prisma = makePrisma(makeAlert(), {
+      firstName: "Jeanne",
+      preferredName: null,
+      familyContactPhone: "+33612345678",
+    });
+    const notifier = { name: "twilio", sendSms: vi.fn().mockRejectedValue(new Error("boom")) };
+    const service = new AlertService(prisma as any, makeAudit() as any, notifier as any);
+
+    const result = await service.create(params);
+    expect(result.status).toBe("created");
+  });
+
+  it("does nothing extra when no provider is configured (default)", async () => {
+    const prisma = makePrisma(makeAlert());
+    const service = new AlertService(prisma as any, makeAudit() as any);
+
+    const result = await service.create(params);
+
+    expect(result.status).toBe("created");
+    expect(prisma.resident.findUnique).not.toHaveBeenCalled(); // short-circuits
+  });
+});
+
+describe("buildAlertSms", () => {
+  it("never includes medical specifics, always points to the dashboard", () => {
+    const msg = buildAlertSms("missed_medication", "Jeanne");
+    expect(msg).toContain("Jeanne");
+    expect(msg).toContain("tableau de bord");
+    expect(msg.toLowerCase()).not.toContain("dose");
+  });
+
+  it("uses a distinct wording for wellbeing/emergency", () => {
+    expect(buildAlertSms("emergency_phrase", "Jeanne")).toContain("besoin d'aide");
   });
 });
 
