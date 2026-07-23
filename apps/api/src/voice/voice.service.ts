@@ -12,6 +12,8 @@ import { AuditService } from "../audit/audit.service";
 import { PrismaService } from "../prisma/prisma.service";
 import { ReminderConfirmationService } from "../reminder/reminder-confirmation.service";
 import { MemoryService } from "../memory/memory.service";
+import { AlertService } from "../alert/alert.service";
+import { detectEmergency } from "./emergency-phrases";
 
 export interface ConverseInput {
   residentId: string;
@@ -90,6 +92,7 @@ export class VoiceService {
     private readonly prisma: PrismaService,
     private readonly confirmation: ReminderConfirmationService,
     private readonly memory: MemoryService,
+    private readonly alerts: AlertService,
   ) {
     const apiKey = process.env.OPENAI_API_KEY ?? "";
     this.configured = apiKey.length > 0;
@@ -142,6 +145,11 @@ export class VoiceService {
       mimeType: input.mimeType,
       language,
     });
+
+    // 1b. Safety — deterministic emergency-phrase check on what was actually
+    //     said. Runs BEFORE the AI reply so a cry for help escalates even if the
+    //     model's answer is delayed or off. Best-effort; never blocks the turn.
+    await this.checkEmergency(resident, transcript, language);
 
     // 2. Brain — short, safe, spoken-friendly reply (aware of due reminders).
     const messages: ChatMessage[] = [
@@ -229,6 +237,9 @@ export class VoiceService {
     }));
 
     const transcript = input.text;
+
+    // Safety — same deterministic emergency check as converse() (see 1b).
+    await this.checkEmergency(resident, transcript, language);
 
     // Curated memory the companion remembers about this person (non-medical).
     const memoryFacts = resident ? await this.memory.loadFacts(resident.id) : [];
@@ -382,6 +393,46 @@ export class VoiceService {
       },
     });
     return { reminderId: reminder.id };
+  }
+
+  /**
+   * Deterministic safety net: if the resident's utterance contains an emergency
+   * phrase, raise a critical `emergency_phrase` alert — which in turn notifies
+   * the family contact (SMS). The AI does NOT decide this; a fixed phrase list
+   * does. Best-effort: any failure is logged, never thrown, so it can't break
+   * the conversation or hide the emergency.
+   *
+   * Requires a real, loaded resident (valid FK + a family contact to notify).
+   * Note: this does not auto-dial emergency services — that step needs explicit
+   * human confirmation and is handled later in the cascade.
+   */
+  private async checkEmergency(
+    resident: { id: string } | null,
+    transcript: string,
+    language: "fr" | "en",
+  ): Promise<void> {
+    if (!resident) return;
+    const hit = detectEmergency(transcript, language);
+    if (!hit.detected) return;
+    try {
+      await this.alerts.create({
+        residentId: resident.id,
+        type: "emergency_phrase",
+        severity: "critical",
+        message: `Phrase de détresse détectée en conversation : « ${hit.matched} »`,
+      });
+      await this.audit.log({
+        actorType: "system",
+        action: "voice.emergency_detected",
+        entityType: "Resident",
+        entityId: resident.id,
+        metadata: { matched: hit.matched, language },
+      });
+    } catch (err) {
+      this.logger.error(
+        `Failed to raise emergency alert for resident ${resident.id}: ${(err as Error).message}`,
+      );
+    }
   }
 
   /** Loads the resident only if the id is a real, AI-consented resident. */

@@ -28,7 +28,7 @@ function makePrisma() {
   };
 }
 
-function build(classification: any) {
+function build(classification: any, transcribeText = "...") {
   const audit = { log: vi.fn().mockResolvedValue(undefined) };
   const prisma = makePrisma();
   const confirmation = { confirm: vi.fn().mockResolvedValue({ id: "evt-1" }) };
@@ -37,6 +37,7 @@ function build(classification: any) {
     loadFacts: vi.fn().mockResolvedValue([]),
     recordConversation: vi.fn().mockResolvedValue(undefined),
   };
+  const alerts = { create: vi.fn().mockResolvedValue({ id: "alert-1" }) };
 
   process.env.OPENAI_API_KEY = "test-key";
   const service = new VoiceService(
@@ -44,9 +45,10 @@ function build(classification: any) {
     prisma as any,
     confirmation as any,
     memory as any,
+    alerts as any,
   );
   (service as any).speech = {
-    transcribe: vi.fn().mockResolvedValue({ text: "..." }),
+    transcribe: vi.fn().mockResolvedValue({ text: transcribeText }),
     synthesize: vi
       .fn()
       .mockResolvedValue({ audio: Buffer.from("x"), mimeType: "audio/mpeg" }),
@@ -55,7 +57,7 @@ function build(classification: any) {
     reply: vi.fn().mockResolvedValue({ text: "D'accord, merci !" }),
     classifyMedicationResponse: vi.fn().mockResolvedValue(classification),
   };
-  return { service, prisma, confirmation };
+  return { service, prisma, confirmation, alerts };
 }
 
 const baseInput = {
@@ -122,5 +124,75 @@ describe("VoiceService.converse — A+B link", () => {
 
     expect(prisma.reminderEvent.findMany).not.toHaveBeenCalled();
     expect(confirmation.confirm).not.toHaveBeenCalled();
+  });
+});
+
+describe("VoiceService — emergency-phrase detection", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("raises a critical emergency alert when the resident cries for help", async () => {
+    const { service, alerts } = build(null, "au secours, aidez-moi");
+
+    await service.converse(baseInput);
+
+    expect(alerts.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        residentId: "res-1",
+        type: "emergency_phrase",
+        severity: "critical",
+      }),
+    );
+  });
+
+  it("detects distress in the text (chatText) path too", async () => {
+    const { service, alerts } = build(null);
+
+    await service.chatText({
+      residentId: "res-1",
+      text: "je suis tombée, je n'arrive plus à me relever",
+      language: "fr",
+    });
+
+    expect(alerts.create).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "emergency_phrase" }),
+    );
+  });
+
+  it("does NOT raise an alert for ordinary conversation", async () => {
+    const { service, alerts } = build(null, "bonjour, il fait beau aujourd'hui");
+
+    await service.converse(baseInput);
+
+    expect(alerts.create).not.toHaveBeenCalled();
+  });
+
+  it("does NOT raise an alert for a negated phrase", async () => {
+    const { service, alerts } = build(null);
+
+    await service.chatText({
+      residentId: "res-1",
+      text: "ne t'inquiète pas, je n'ai pas mal à la poitrine",
+      language: "fr",
+    });
+
+    expect(alerts.create).not.toHaveBeenCalled();
+  });
+
+  it("does NOT raise an alert for the demo resident (no real record to attach)", async () => {
+    const { service, alerts } = build(null, "au secours");
+
+    await service.converse({ ...baseInput, residentId: "demo" });
+
+    expect(alerts.create).not.toHaveBeenCalled();
+  });
+
+  it("still replies normally even if raising the alert fails", async () => {
+    const { service, alerts } = build(null, "au secours");
+    alerts.create.mockRejectedValueOnce(new Error("db down"));
+
+    const result = await service.converse(baseInput);
+
+    // The conversation must not break because the alert write failed.
+    expect(result.reply).toBeTruthy();
   });
 });
