@@ -167,6 +167,63 @@ describe("AlertService.create — SMS notification", () => {
   });
 });
 
+describe("AlertService.getDeliveryStatus", () => {
+  it("reports a successful send without leaking the phone or body", async () => {
+    const audit = {
+      log: vi.fn(),
+      findAll: vi.fn().mockResolvedValue([
+        {
+          action: "alert.notification_sent",
+          createdAt: new Date(),
+          metadata: { channel: "sms", provider: "twilio", ok: true },
+        },
+      ]),
+    };
+    const service = new AlertService(makePrisma(makeAlert()) as any, audit as any);
+
+    const res = await service.getDeliveryStatus("alert-1");
+
+    expect(res.attempted).toBe(true);
+    expect(res.attempts[0].ok).toBe(true);
+    expect(res.attempts[0].channel).toBe("sms");
+    expect(JSON.stringify(res)).not.toMatch(/\+\d{6,}/); // no phone number
+  });
+
+  it("surfaces the provider error when the send failed", async () => {
+    const audit = {
+      log: vi.fn(),
+      findAll: vi.fn().mockResolvedValue([
+        {
+          action: "alert.notification_failed",
+          createdAt: new Date(),
+          metadata: { channel: "sms", provider: "twilio", ok: false, error: "Twilio 21608" },
+        },
+      ]),
+    };
+    const service = new AlertService(makePrisma(makeAlert()) as any, audit as any);
+
+    const res = await service.getDeliveryStatus("alert-1");
+
+    expect(res.attempts[0].ok).toBe(false);
+    expect(res.attempts[0].error).toBe("Twilio 21608");
+  });
+
+  it("reports attempted=false when nothing was ever sent", async () => {
+    const audit = {
+      log: vi.fn(),
+      findAll: vi.fn().mockResolvedValue([
+        { action: "alert.created", createdAt: new Date(), metadata: {} },
+      ]),
+    };
+    const service = new AlertService(makePrisma(makeAlert()) as any, audit as any);
+
+    const res = await service.getDeliveryStatus("alert-1");
+
+    expect(res.attempted).toBe(false);
+    expect(res.attempts).toHaveLength(0);
+  });
+});
+
 describe("buildAlertSms", () => {
   it("never includes medical specifics, always points to the dashboard", () => {
     const msg = buildAlertSms("missed_medication", "Jeanne");

@@ -139,6 +139,44 @@ export class AlertService {
       include: { resident: true },
     });
   }
+
+  /**
+   * Was the emergency contact actually reached for this alert?
+   *
+   * Delivery outcomes are recorded in the audit trail, which nothing exposed —
+   * so a caregiver had no way to tell whether the SMS went out or failed
+   * silently. For an alerting system that blind spot matters: a failed
+   * notification looks exactly like a successful one.
+   *
+   * Returns metadata only (channel/provider/ok/error) — never the phone number
+   * or message body, which are deliberately not logged.
+   */
+  async getDeliveryStatus(id: string) {
+    const entries = await this.audit.findAll("Alert", id);
+    const attempts = entries
+      .filter(
+        (e) =>
+          e.action === "alert.notification_sent" ||
+          e.action === "alert.notification_failed",
+      )
+      .map((e) => {
+        const meta = (e.metadata ?? {}) as Record<string, unknown>;
+        return {
+          at: e.createdAt,
+          ok: e.action === "alert.notification_sent",
+          channel: meta.channel ?? null,
+          provider: meta.provider ?? null,
+          error: meta.error ?? null,
+        };
+      });
+    return {
+      alertId: id,
+      // No attempt at all usually means no provider configured, or the resident
+      // has no emergency-contact phone on file.
+      attempted: attempts.length > 0,
+      attempts,
+    };
+  }
 }
 
 /**

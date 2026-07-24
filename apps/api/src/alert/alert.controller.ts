@@ -15,6 +15,12 @@ export class AlertController {
     return this.service.findForResident(residentId);
   }
 
+  /** Whether the emergency contact was actually reached (SMS sent / failed). */
+  @Get(":id/delivery")
+  delivery(@Param("id") id: string) {
+    return this.service.getDeliveryStatus(id);
+  }
+
   @Post(":id/acknowledge")
   @HttpCode(HttpStatus.OK)
   acknowledge(
