@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { AlertService, buildAlertSms } from "./alert.service";
+import { AlertService, buildAlertSms, redactPhoneNumbers } from "./alert.service";
 import { NotFoundException } from "@nestjs/common";
 
 function makeAlert(overrides: Partial<any> = {}) {
@@ -221,6 +221,26 @@ describe("AlertService.getDeliveryStatus", () => {
 
     expect(res.attempted).toBe(false);
     expect(res.attempts).toHaveLength(0);
+  });
+});
+
+describe("redactPhoneNumbers", () => {
+  it("masks a number quoted back by the provider", () => {
+    const out = redactPhoneNumbers(
+      "Twilio 400: 'From' +33686744812 is not a Twilio phone number",
+    );
+    expect(out).not.toContain("33686744812");
+    expect(out).toContain("12"); // last 2 digits kept for troubleshooting
+  });
+
+  it("leaves an error without a number untouched", () => {
+    expect(redactPhoneNumbers("Twilio 401: authenticate")).toBe(
+      "Twilio 401: authenticate",
+    );
+  });
+
+  it("passes undefined through", () => {
+    expect(redactPhoneNumbers(undefined)).toBeUndefined();
   });
 });
 

@@ -84,7 +84,13 @@ export class AlertService {
         entityType: "Alert",
         entityId: alertId,
         // Never log the phone number or message body — audit stays metadata-only.
-        metadata: { channel: "sms", provider: this.notifier.name, ok: result.ok, error: result.error },
+        // Provider errors are redacted because they often quote a number back.
+        metadata: {
+          channel: "sms",
+          provider: this.notifier.name,
+          ok: result.ok,
+          error: redactPhoneNumbers(result.error),
+        },
       })
       .catch(() => undefined);
   }
@@ -177,6 +183,22 @@ export class AlertService {
       attempts,
     };
   }
+}
+
+/**
+ * Mask phone numbers inside a provider error before it reaches the audit log.
+ *
+ * We never log the recipient ourselves, but a provider's error message often
+ * quotes a number back at us (e.g. Twilio's "'From' +33... is not a Twilio phone
+ * number"), which would silently defeat that guarantee. Keeps the last 2 digits
+ * so an operator can still tell which number was involved.
+ */
+export function redactPhoneNumbers(error?: string): string | undefined {
+  if (!error) return error;
+  return error.replace(/\+?\d[\d\s().-]{6,}\d/g, (m) => {
+    const digits = m.replace(/\D/g, "");
+    return `+${"*".repeat(Math.max(0, digits.length - 2))}${digits.slice(-2)}`;
+  });
 }
 
 /**
