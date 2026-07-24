@@ -4,6 +4,8 @@ import WebSocket from "ws";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuditService } from "../audit/audit.service";
 import { MemoryService } from "../memory/memory.service";
+import { AlertService } from "../alert/alert.service";
+import { detectEmergency } from "../voice/emergency-phrases";
 import {
   buildCompanionSystemPrompt,
   formatToday,
@@ -34,6 +36,7 @@ export class RealtimeHandler {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly memory: MemoryService,
+    private readonly alerts: AlertService,
   ) {
     this.webSearch = createWebSearchProvider({
       provider: process.env.WEB_SEARCH_PROVIDER,
@@ -87,6 +90,9 @@ export class RealtimeHandler {
       | "female" | "male" | "other" | "unspecified" | undefined;
     let familyContact: { name?: string; relation?: string } | undefined;
     let dueReminders: Array<{ medicationName: string; timeOfDay?: string }> = [];
+    // Set only for a real, consented resident — an emergency alert needs a valid
+    // FK and someone to notify. Stays undefined for demo/unknown sessions.
+    let alertableResidentId: string | undefined;
 
     if (residentId && residentId !== "demo") {
       const resident = await this.prisma.resident
@@ -101,6 +107,7 @@ export class RealtimeHandler {
           allowAiConversation?: boolean;
         };
         if (consented && privacy.allowAiConversation !== false) {
+          alertableResidentId = resident.id;
           residentFirstName =
             resident.preferredName ?? resident.firstName ?? undefined;
           residentGender = (resident.gender as any) ?? undefined;
@@ -152,6 +159,39 @@ export class RealtimeHandler {
       memoryPersisted = true;
       if (sessionTurns.length > 0) {
         void this.memory.recordConversation(residentId, sessionTurns.slice());
+      }
+    };
+
+    /**
+     * Deterministic emergency escalation for the streaming path. Raises at most
+     * ONE alert per session: an ongoing emergency shouldn't text the family
+     * contact on every repeated cry for help. Best-effort — a failure is logged
+     * and never interrupts the live conversation.
+     */
+    let emergencyRaised = false;
+    const raiseEmergencyIfNeeded = async (transcript: string) => {
+      if (emergencyRaised || !alertableResidentId) return;
+      const hit = detectEmergency(transcript, language);
+      if (!hit.detected) return;
+      emergencyRaised = true;
+      try {
+        await this.alerts.create({
+          residentId: alertableResidentId,
+          type: "emergency_phrase",
+          severity: "critical",
+          message: `Phrase de détresse détectée en conversation : « ${hit.matched} »`,
+        });
+        await this.audit.log({
+          actorType: "system",
+          action: "voice.emergency_detected",
+          entityType: "Resident",
+          entityId: alertableResidentId,
+          metadata: { matched: hit.matched, language, channel: "realtime" },
+        });
+      } catch (err) {
+        this.logger.error(
+          `Failed to raise emergency alert (realtime) for ${alertableResidentId}: ${(err as Error).message}`,
+        );
       }
     };
 
@@ -271,6 +311,9 @@ export class RealtimeHandler {
           // What the resident said (Whisper transcript)
           if (typeof event.transcript === "string") {
             sessionTurns.push({ role: "user", content: event.transcript });
+            // Safety: same deterministic emergency check as the HTTP voice
+            // paths. Fire-and-forget so it never delays the live conversation.
+            void raiseEmergencyIfNeeded(event.transcript);
           }
           client.send(
             JSON.stringify({
